@@ -16,6 +16,8 @@
 ### Browser Automation Engine
 - **Playwright**: Headless browser automation controlling Chromium, Firefox, and WebKit.
 - Used for DOM snapshot extraction, dynamic script evaluation, authenticated sessions, responsive viewport rendering, and screenshot generation.
+- **As built in Phase 3**: the package is pinned as `playwright-core@1.63.0` (a **devDependency**, used only by the worker and tests; no browser binaries are downloaded by `npm install`). The MVP engine is **Chromium-only**. Phase 3 implements *runtime detection + launch/navigate/close* only; extraction is Phase 4. The worker runs via Node's native TypeScript stripping (`node --experimental-strip-types`). Packaging the worker/browser for a release build is deferred.
+- **`test:browser`**: `vitest run src/workers/crawler` exercises the real worker + Chromium, but is **skipped by default** (gate: `RUN_BROWSER_TESTS=1`); enable it with `npx playwright install chromium`.
 
 ### Local Persistence
 - **SQLite**: Embedded database used for metadata, scan runs, asset registries, blueprint JSON trees, and application settings.

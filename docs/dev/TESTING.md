@@ -111,14 +111,18 @@ Test Workflow: E2E Pipeline Run
 
 ## 5. Continuous Integration (CI) Pipeline Commands
 
-Phase 1 ships only the unit/component tier. Integration and E2E scripts below are reserved for later phases; the current `package.json` provides `test` / `test:unit` (both run Vitest), and the finer-grained scripts are added when those suites exist.
-
 ```bash
-# Unit & component tests (Vitest + React Testing Library) - implemented in Phase 1
+# Unit & component tests (Vitest + React Testing Library) - Phase 1
 npm run test:unit
 
 # Storage layer tests only (`vitest run src/services/storage`) - Phase 2
 npm run test:storage
+
+# Process/worker/browser foundation tests - Phase 3 (no browser download needed)
+npm run test:browser
+
+# Opt-in real-browser smoke test (requires `npx playwright install chromium`)
+RUN_BROWSER_TESTS=1 npm run test:browser
 
 # Typecheck & Lint
 npm run typecheck && npm run lint
@@ -129,6 +133,16 @@ npm run build
 # Native build (requires a Rust toolchain: rustc + cargo)
 npm run tauri:build
 ```
+
+### 5.1 Phase 3 test tier (browser / process foundation)
+
+The default suite (`npm run test`) covers the Phase 3 foundation **without any browser download** by injecting fakes for the process spawner and the browser worker:
+
+- `src/services/infra/workerProtocol.test.ts` - envelope/version handling, deterministic serialization, correlation ids, malformed frames, unknown types, structured-error propagation, framing/buffering limits.
+- `src/services/infra/processManager.test.ts` - startup, duplicate-start prevention, shutdown, startup timeout, communication timeout, unexpected exit, invalid transitions, cleanup after failure, and the **kill-within-500ms** assertion (TESTING.md Scenario 3).
+- `src/services/browser/browserRuntime.test.ts` - detection, missing executable, launch failure, and cleanup after launch (fake worker; no real browser).
+
+The **opt-in** smoke test (`src/workers/crawler/__tests__/workerSmoke.test.ts`) is the only test that launches a real Chromium. It is gated by `RUN_BROWSER_TESTS` and is skipped by default, so `npm run test` and CI never require a browser binary or an external website. It starts the local fixture server (`scripts/fixtureServer.mjs`, `127.0.0.1:9099`) and the real worker, then pings, launches, navigates to `http://127.0.0.1:9099/simple-page`, and closes cleanly.
 
 Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):
 

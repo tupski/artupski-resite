@@ -5,6 +5,7 @@ import { useThemeSync } from './useThemeSync';
 import { createEvent, eventBus } from '../services/infra/eventBus';
 import { logger } from '../services/infra/logger';
 import { initializeStorage } from '../services/storage';
+import { initializeBrowserRuntime } from '../services/browser';
 
 const APP_VERSION = '0.1.0';
 
@@ -23,6 +24,11 @@ export function App() {
     // Non-blocking: the UI stays usable while storage opens and migrates, and
     // failures are surfaced as the storage `error` state rather than crashing.
     void initializeStorage();
+
+    // Non-blocking browser-runtime detection (Phase 3). Outside the Tauri shell
+    // this resolves to `null` and does nothing; a missing browser becomes an
+    // honest `browser.missing` event, never a crash or a blocking spinner.
+    void initializeBrowserRuntime();
   }, []);
 
   return <RouterProvider router={router} />;

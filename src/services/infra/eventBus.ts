@@ -18,6 +18,8 @@ export type EventDomain =
   | 'clone'
   | 'project'
   | 'storage'
+  | 'process'
+  | 'browser'
   | 'app';
 
 /** Canonical event keys, following the `<domain>.<action_or_state>` taxonomy. */
@@ -54,7 +56,19 @@ export type AppEventType =
   | 'clone.completed'
   | 'project.started'
   | 'project.file_generated'
-  | 'project.completed';
+  | 'project.completed'
+  | 'process.spawning'
+  | 'process.ready'
+  | 'process.busy'
+  | 'process.stopping'
+  | 'process.stopped'
+  | 'process.exited'
+  | 'process.failed'
+  | 'browser.detection_started'
+  | 'browser.detected'
+  | 'browser.missing'
+  | 'browser.session_started'
+  | 'browser.session_closed';
 
 /** Base envelope carried by every event (EVENT-SYSTEM.md section 3). */
 export interface BaseEventPayload {
@@ -105,6 +119,55 @@ export interface StorageMigrationFailedPayload extends BaseEventPayload {
   message: string;
 }
 
+/** ProcessManager lifecycle payloads (Phase 3). */
+export interface ProcessLifecyclePayload extends BaseEventPayload {
+  domain: 'process';
+  /** Logical name of the managed process (e.g. "crawler"). */
+  processName: string;
+  /** OS process id once spawned; absent before the handle exists. */
+  pid?: number;
+}
+
+export interface ProcessExitedPayload extends BaseEventPayload {
+  domain: 'process';
+  processName: string;
+  pid?: number;
+  code: number | null;
+  /** Numeric signal number on Unix; always `null` on Windows. */
+  signal: number | null;
+  /** True when the exit was not initiated by a managed shutdown. */
+  unexpected: boolean;
+}
+
+export interface ProcessFailedPayload extends BaseEventPayload {
+  domain: 'process';
+  processName: string;
+  code: string;
+  message: string;
+}
+
+/** Browser runtime payloads (Phase 3). */
+export interface BrowserDetectedPayload extends BaseEventPayload {
+  domain: 'browser';
+  engine: string;
+  installed: boolean;
+  version?: string;
+  executablePath?: string;
+}
+
+export interface BrowserMissingPayload extends BaseEventPayload {
+  domain: 'browser';
+  engine: string;
+  code: string;
+  message: string;
+}
+
+export interface BrowserSessionPayload extends BaseEventPayload {
+  domain: 'browser';
+  engine: string;
+  sessionId: string;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
@@ -114,6 +177,18 @@ export interface AppEventPayloadMap {
   'storage.migration_started': StorageMigrationStartedPayload;
   'storage.migration_completed': StorageMigrationCompletedPayload;
   'storage.migration_failed': StorageMigrationFailedPayload;
+  'process.spawning': ProcessLifecyclePayload;
+  'process.ready': ProcessLifecyclePayload;
+  'process.busy': ProcessLifecyclePayload;
+  'process.stopping': ProcessLifecyclePayload;
+  'process.stopped': ProcessLifecyclePayload;
+  'process.exited': ProcessExitedPayload;
+  'process.failed': ProcessFailedPayload;
+  'browser.detection_started': BrowserDetectedPayload;
+  'browser.detected': BrowserDetectedPayload;
+  'browser.missing': BrowserMissingPayload;
+  'browser.session_started': BrowserSessionPayload;
+  'browser.session_closed': BrowserSessionPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;

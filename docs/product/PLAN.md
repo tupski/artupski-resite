@@ -75,19 +75,32 @@ The following decisions were made during implementation and supersede the pre-im
 
 ---
 
-## Phase 3: Infrastructure Subsystems (EventBus, Logger, ProcessManager)
-- **Goal**: Build background process orchestration, logging, and event distribution.
-- **Scope**: ProcessManager child-process runner, EventBus pub/sub, structured Logger.
+## Phase 3: Browser / Playwright Foundation (Infrastructure Subsystems)
+- **Status**: COMPLETE (see the Phase 3 implementation note at the end of this section).
+- **Goal**: Build the child-process orchestration foundation and a Playwright *runtime* boundary - launch/navigate only.
+- **Scope**: ProcessManager lifecycle + typed worker protocol, a dedicated Node worker, and browser runtime detection/management. **Not** crawling, DOM/CSS/JS analysis, network analysis, technology detection, or screenshots (those remain Phase 4+).
 - **Dependencies**: Phase 2.
-- **Files/Modules Affected**: `src/services/infra/logger.ts`, `src/services/infra/eventBus.ts`, `src/services/infra/processManager.ts`.
+- **Files/Modules Affected**: `src/services/infra/processManager.ts`, `src/services/infra/workerProtocol.ts`, `src/services/infra/processErrors.ts`, `src/services/infra/tauriProcessSpawner.ts`, `src/services/browser/`, `src/workers/crawler/`, `src-tauri/src/process.rs`.
 - **Implementation Tasks**:
-  1. Implement EventBus supporting typed events.
-  2. Implement file & UI structured logging.
+  1. Reuse the Phase 1 typed `EventBus` and structured `Logger` (no parallel systems).
+  2. Implement a versioned, validated JSON-over-stdio worker protocol.
   3. Implement ProcessManager to spawn, stream stdout/stderr, and terminate workers safely.
-- **Tests**: Process termination and zombie process cleanup tests.
-- **Acceptance Criteria**: Worker processes terminate immediately when killed or when Tauri window closes.
-- **Potential Risks**: Orphaned Node/Playwright processes on unexpected app exit.
-- **Verification**: Spawn dummy child process, kill via ProcessManager, verify process tree clean.
+  4. Implement browser runtime detection/management (Chromium-only MVP) via the worker.
+- **Tests**: Protocol, lifecycle, browser-runtime unit tests (injected fakes) plus an opt-in real-browser smoke test.
+- **Acceptance Criteria**: Worker processes terminate within 500ms when killed; a missing browser is reported honestly without crashing the app.
+- **Potential Risks**: Orphaned Node/Playwright processes on unexpected app exit; packaging the worker/browser for release.
+- **Verification**: `npm run test` (no browser needed) plus `RUN_BROWSER_TESTS=1 npm run test:browser`.
+
+### Phase 3 Implementation Notes (as built)
+The following decisions were made during implementation and supersede the pre-implementation wording above where they conflict:
+
+1. **Phase identity**: Phase 3 is *infrastructure + browser runtime foundation only*. Playwright is used solely to launch Chromium and navigate to a controlled local fixture in the opt-in smoke test. Extraction/analysis is explicitly deferred to Phase 4.
+2. **Transport**: newline-delimited JSON over **stdio** (not WebSocket), so the webview CSP `connect-src` is not widened. See `docs/architecture/WORKER-PROTOCOL.md`.
+3. **Native spawn**: a minimal custom Rust module (`src-tauri/src/process.rs`) using `std::process::Command` with array args and no shell. Only four narrowly-named commands are registered (`process_spawn`, `process_write`, `process_kill`, `process_status`). No `tauri-plugin-shell` / `tauri-plugin-process` was added.
+4. **Browser distribution**: no bundling or auto-download. Phase 3 implements runtime detection/diagnostics only; the opt-in smoke test uses dev-time `npx playwright install chromium`. Packaging the worker + browser is deferred.
+5. **Dependency**: `playwright-core` is pinned as a **devDependency** (used only by the worker/tests); the MVP engine is Chromium-only.
+6. **UI**: Phase 3 is UI-inert. The scan route is unchanged and its Start button remains disabled.
+7. **Phase 4 (unchanged)**: the Playwright crawler, DOM/network extraction, and asset pipeline remain Phase 4.
 
 ---
 

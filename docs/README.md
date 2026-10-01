@@ -21,6 +21,7 @@ guidelines and history, see the root files: [`AGENTS.md`](../AGENTS.md),
 | [`TECH-STACK.md`](architecture/TECH-STACK.md) | Frameworks, tooling, and technology choices. |
 | [`EVENT-SYSTEM.md`](architecture/EVENT-SYSTEM.md) | Event taxonomy and messaging design. |
 | [`ERROR-HANDLING.md`](architecture/ERROR-HANDLING.md) | Error handling strategy and conventions. |
+| [`WORKER-PROTOCOL.md`](architecture/WORKER-PROTOCOL.md) | Worker stdio JSON protocol and process lifecycle. |
 | [`DATABASE.md`](architecture/DATABASE.md) | Schema, tables, relations, and indexing. |
 
 ## Specs

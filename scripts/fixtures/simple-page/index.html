@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Artupski ReSite - Simple Fixture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: #0b1120;
+        color: #e2e8f0;
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+      }
+      main {
+        max-width: 40rem;
+        padding: 2rem;
+        text-align: center;
+      }
+      h1 {
+        margin: 0 0 0.5rem;
+        font-size: 1.75rem;
+      }
+      p {
+        color: #94a3b8;
+        line-height: 1.6;
+      }
+      code {
+        color: #38bdf8;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="fixture-title">Artupski ReSite Simple Fixture</h1>
+      <p>
+        This is a controlled local page served from <code>127.0.0.1:9099</code>.
+        It exists so the Phase 3 browser smoke test can launch Chromium and
+        navigate without touching any external site.
+      </p>
+      <p id="fixture-marker" data-fixture="simple-page">fixture-ready</p>
+    </main>
+  </body>
+</html>

@@ -136,3 +136,27 @@ ProcessManager spawns node processes, Playwright headless browser instances, and
 - Argument Array Escaping: Pass arguments strictly as string arrays (`args: ["--flag", "val"]`). Never format shell strings using string concatenation.
 - Environment Isolation: Child processes inherit a sanitized environment object stripping sensitive host process variables (`AWS_SECRET_ACCESS_KEY`, `SSH_AUTH_SOCK`).
 - Execution Timeout & Memory Limit: Subprocesses capped at 120-second wall clock time and 2GB RAM. Orphaned process tree terminated via SIGKILL on timeout.
+
+### 6.2 Phase 3 Spawn Model (as built)
+
+The child-process boundary is deliberately narrow. The frontend cannot spawn an arbitrary process, choose a path, or reach a shell.
+
+- **Spawn primitive**: `src-tauri/src/process.rs` uses `std::process::Command::new(binary).args([...])`. **No shell is ever involved** (`shell:false` equivalent) - there is no string to concatenate or quote-escape.
+- **Executable allowlist**: only `node` / `node.exe` (matched by basename, case-insensitive) may be launched. Anything else is rejected with a clear error.
+- **Argument validation**: each argument is NUL-checked and capped at 8 KiB; the working directory is NUL-checked.
+- **Environment sanitization**: `Command::env_clear()` is called, then a fixed allowlist of harmless host variables (`PATH`, `TEMP`, `HOME`, `LANG`, ...) is applied, plus caller-provided entries that are themselves NUL/length-checked. `NODE_OPTIONS` is **excluded** (it can `--require` arbitrary modules), and no credential/token/socket variable is inherited.
+- **Bounded I/O**: stdout/stderr are streamed to the frontend as `process://stdout|stderr` events, one line at a time, capped at 64 KiB/line. stdin writes are capped at 1 MiB. The TypeScript side additionally drops frames over 1 MiB.
+- **Kill-tree**: force termination uses `taskkill /T /F` on Windows and a process-group `kill -KILL` on Unix so orphaned grandchildren do not survive.
+- **Opaque handles**: the frontend addresses a process only by a Rust-generated id; it never supplies a PID and never supplies a path.
+
+### 6.3 Tauri Capability Scope (exact)
+
+- `src-tauri/capabilities/default.json` remains **`["core:default"]`** only. `core:default` is what allows the window to `listen` for the `process://*` events.
+- The four new commands (`process_spawn`, `process_write`, `process_kill`, `process_status`) are **custom application commands**, not plugin permissions, so they require **no additional capability entry**.
+- **No `tauri-plugin-shell` and no `tauri-plugin-process` are installed.** No filesystem, shell, or generic-process permission is granted. The application's own Rust code enforces the allowlist, argument/env validation, and size caps.
+
+### 6.4 IPC / Protocol Validation
+
+- Every worker frame crossing the stdio boundary is validated (`workerProtocol.validateMessage`): envelope shape, integer protocol version, correlation id, known type, and a payload matching the type. Malformed frames produce `WORKER_PROTOCOL_VIOLATION`.
+- The worker and host share one protocol module, so the wire contract cannot drift.
+- The React UI never touches child processes or Playwright objects; it consumes `process.*` / `browser.*` events only.

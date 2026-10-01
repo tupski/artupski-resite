@@ -32,6 +32,8 @@ Standardized event key structure: `<domain>.<action_or_state>`.
 - `clone.*`: Local HTML path rewriting, web server serving, static preview.
 - `project.*`: Codebase generation, file writing, package installation.
 - `storage.*`: Local database initialization, migration lifecycle, readiness.
+- `process.*`: Child-process lifecycle (spawn/ready/busy/stopping/stopped/exited/failed).
+- `browser.*`: Browser runtime detection and controlled session lifecycle.
 
 ---
 
@@ -189,6 +191,25 @@ Emitted by `storageService` during startup and migration, using the existing `cr
 | `storage.migration_completed` | After a migration commits. |
 | `storage.migration_failed` | Initialization or a migration fails (carries the structured error code and message). |
 | `storage.ready` | The database is open, migrated, and repositories are available. |
+
+### 3.2 Process & Browser Event Keys (Phase 3)
+
+Emitted by `ProcessManager` and `browserRuntime` using the shared `createEvent` envelope (`BaseEventPayload`). Payload interfaces live in `src/services/infra/eventBus.ts`.
+
+| Event key | Emitted when | Payload highlights |
+| :--- | :--- | :--- |
+| `process.spawning` | A worker spawn begins. | `processName` |
+| `process.ready` | Spawn + handshake succeeded, or a request batch drained. | `processName`, `pid?` |
+| `process.busy` | At least one request is in flight. | `processName`, `pid?` |
+| `process.stopping` | Graceful shutdown begins. | `processName`, `pid?` |
+| `process.stopped` | The worker has fully stopped. | `processName` |
+| `process.exited` | The worker's exit event fired (managed or unexpected). | `processName`, `code`, `signal`, `unexpected` |
+| `process.failed` | Spawn/timeout/protocol failure. | `processName`, `code`, `message` |
+| `browser.detection_started` | Browser detection begins. | `engine`, `installed` |
+| `browser.detected` | A browser engine was found. | `engine`, `installed`, `version?`, `executablePath?` |
+| `browser.missing` | No usable browser was found (or startup failed). | `engine`, `code`, `message` |
+| `browser.session_started` | A controlled browser session launched. | `engine`, `sessionId` |
+| `browser.session_closed` | A controlled browser session closed. | `engine`, `sessionId` |
 
 ---
 

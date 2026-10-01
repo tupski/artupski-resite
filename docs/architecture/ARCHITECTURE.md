@@ -80,9 +80,20 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
 
 ## 5. Playwright Integration Model
 - Playwright runs as a dedicated Node.js child process managed by the TypeScript/Rust infrastructure.
-- Communication via JSON-RPC over stdio or WebSocket IPC.
+- **Communication via JSON-RPC-style messages over stdio** (newline-delimited JSON). *Resolved in Phase 3: WebSocket was rejected so the webview CSP `connect-src` is not widened.* See `docs/architecture/WORKER-PROTOCOL.md`.
 - Supports multi-viewport rendering (`375x667` mobile, `768x1024` tablet, `1920x1080` desktop).
 - Captures full-page screenshots and element-level bounding boxes for visual verification.
+
+### 5.1 Phase 3 Runtime Foundation (as built)
+
+Phase 3 established the process boundary and a **launch/navigate-only** browser runtime. Extraction/analysis is Phase 4.
+
+- **Process boundary**: `src-tauri/src/process.rs` spawns the worker with `std::process::Command` (array args, no shell) and exposes four narrow commands: `process_spawn`, `process_write`, `process_kill`, `process_status`. The executable is allowlisted (`node`), arguments are validated, the environment is sanitized, and stdout/stderr stream as bounded lines over `process://stdout|stderr|exit` events.
+- **Lifecycle (TS)**: `src/services/infra/processManager.ts` owns a guarded state machine (`not_started → starting → ready ⇄ busy → stopping → stopped`, plus `failed`), duplicate-start prevention, startup/communication timeouts (≤30s), graceful-then-forced shutdown, unexpected-exit handling, and bounded buffering. It is injectable via `ProcessSpawner` (Rust IPC in prod, fake in tests).
+- **Protocol**: `src/services/infra/workerProtocol.ts` (shared with the worker via `src/workers/crawler/protocol.ts`) - versioned envelopes, correlation ids, deterministic JSON, runtime validation.
+- **Browser runtime**: `src/services/browser/browserRuntime.ts` - detection/diagnostics without download, Chromium-only MVP, controlled launch/navigate/close. Non-blocking init from `App.tsx`; a missing browser is reported as `BROWSER_NOT_INSTALLED` and never blocks the UI.
+- **Worker**: `src/workers/crawler/index.ts` runs via Node's native TypeScript stripping (`--experimental-strip-types`) and only supports `ping` / `launch` / `navigate` / `close`.
+- **Packaging limitation (deferred)**: the worker script and the Playwright browser are **not** bundled into the release artifact in Phase 3. Dev runs use source; release packaging (bundling the worker + installing the browser) is deferred to a later phase.
 
 ---
 

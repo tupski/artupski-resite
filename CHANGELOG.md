@@ -10,7 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-Phase 2 - local storage foundation: a real, persisted SQLite database behind a typed repository layer.
+Phase 3 - browser / Playwright foundation: a typed child-process boundary and a launch/navigate-only browser runtime. **No crawling, DOM/CSS/JS analysis, network analysis, technology detection, or screenshots** - those remain Phase 4.
+
+- **Worker protocol**: `src/services/infra/workerProtocol.ts` - versioned newline-delimited JSON over **stdio** (not WebSocket, so the CSP `connect-src` is not widened). Deterministic serialization, correlation ids, integer protocol version with rejection of unknown versions, runtime validation of every frame, bounded framing, and `WORKER_PROTOCOL_VIOLATION` on malformed input. Shared with the worker via `src/workers/crawler/protocol.ts`. Documented in `docs/architecture/WORKER-PROTOCOL.md`.
+- **ProcessManager**: `src/services/infra/processManager.ts` - guarded state machine (`not_started | starting | ready | busy | stopping | stopped | failed`), duplicate-start prevention, startup/communication timeouts (≤30s), graceful-then-forced shutdown (500ms grace), unexpected-exit handling, bounded buffering, listener cleanup, and no leaked processes. Injectable via `ProcessSpawner` (Rust IPC in prod, fake in tests).
+- **Rust boundary**: `src-tauri/src/process.rs` - `std::process::Command` with array args and **no shell**, a `node` executable allowlist, argument/env validation, environment sanitization, bounded stdout/stderr streaming, and kill-tree termination. Four narrow commands registered in `src-tauri/src/lib.rs`: `process_spawn`, `process_write`, `process_kill`, `process_status`.
+- **Browser runtime**: `src/services/browser/` - detection/diagnostics without download, Chromium-only MVP, controlled launch/navigate/close via the worker, and `BROWSER_NOT_INSTALLED` when missing. Non-blocking init from `App.tsx`; never blocks or crashes the UI. UI-inert (scan route unchanged).
+- **Worker**: `src/workers/crawler/` - a dedicated Node process (Node native type stripping) supporting only `ping` / `launch` / `navigate` / `close`, plus `src/workers/crawler/workerPaths.ts` for spawn resolution.
+- **Events/Errors**: new `process.*` and `browser.*` event domains in `EVENT-SYSTEM.md` / `eventBus.ts`, and new codes (`PROCESS_SPAWN_FAILED`, `PROCESS_TIMEOUT`, `PROCESS_EXITED_UNEXPECTEDLY`, `WORKER_PROTOCOL_VIOLATION`, `WORKER_SHUTDOWN_FAILED`, `BROWSER_NOT_INSTALLED`) in `ERROR-HANDLING.md` / `errors.ts` / `processErrors.ts`.
+- **IPC**: typed `processSpawn` / `processWrite` / `processKill` / `processStatus` wrappers and `onProcessEvent` in `src/services/ipc/`.
+- **Tooling**: `playwright-core@1.63.0` (pinned devDependency); `npm run test:browser`; `npm run fixture:serve`; local fixture (`scripts/fixtures/simple-page/`) and fixture server (`scripts/fixtureServer.mjs`) on `127.0.0.1:9099`.
+- **Tests**: protocol, lifecycle (incl. kill-within-500ms), and browser-runtime suites run by default with injected fakes (no browser download). The real-browser smoke test is opt-in via `RUN_BROWSER_TESTS=1`.
+
+### Deferred (not in Phase 3)
+The Playwright crawler, DOM/network extraction, technology detection, responsive capture, authentication/session encryption, blueprint generation, AI, clone generation, project generator, and admin remain unimplemented. Packaging the worker script and the Playwright browser into the release artifact is deferred.
+
+### Phase 2 - local storage foundation
+A real, persisted SQLite database behind a typed repository layer.
 
 - **Engine**: `sql.js` (SQLite 3 compiled to WebAssembly) so the same engine runs in the Tauri webview and under Vitest/jsdom; documented deviation from the `better-sqlite3`/Kysely suggestion in `TECH-STACK.md`.
 - **Rust boundary**: `src-tauri/src/storage.rs` exposes three sandboxed commands (`storage_database_location`, `storage_read_database`, `storage_write_database`) for the single `app.db` file in the app-local-data directory. Atomic temp-file + rename writes, a 64 MiB cap, and an app-local-data containment check. Rust owns no schema, migrations, or CRUD, and exposes no generic SQL. CSP `script-src` gains `'wasm-unsafe-eval'` only.

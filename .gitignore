@@ -12,6 +12,11 @@ src-tauri/gen
 # Test output
 coverage
 
+# Playwright / browser temp dirs (Phase 3 browser tests)
+.playwright
+playwright-report
+test-results
+
 # Logs
 *.log
 npm-debug.log*

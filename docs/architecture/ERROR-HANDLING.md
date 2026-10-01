@@ -35,6 +35,12 @@ System failure modes taxonomy, structured error schemas, recovery strategies, an
 | `DB_` | `MIGRATION_FAILED` | Persistence | A schema migration threw and was rolled back. |
 | `DB_` | `MIGRATION_CHECKSUM_MISMATCH` | Persistence | An applied migration no longer matches its recorded checksum (fatal; refuses to continue). |
 | `PROC_` | `USER_CANCELLED` | Lifecycle | User aborted scan or generation task via UI. |
+| `PROC_` | `PROCESS_SPAWN_FAILED` | Process | The worker process could not be started (e.g. Node missing, spawn rejected). |
+| `PROC_` | `PROCESS_TIMEOUT` | Process | A worker operation exceeded its startup or communication timeout. |
+| `PROC_` | `PROCESS_EXITED_UNEXPECTEDLY` | Process | The worker exited on its own (crash/OOM/signal) without a managed shutdown. |
+| `PROC_` | `WORKER_PROTOCOL_VIOLATION` | Process | A frame failed validation (malformed, unknown type, version mismatch). |
+| `PROC_` | `WORKER_SHUTDOWN_FAILED` | Process | The worker did not stop within the grace period and was force-terminated. |
+| `BROWSER_` | `BROWSER_NOT_INSTALLED` | Browser | No Playwright Chromium build was found for the runtime. |
 
 ---
 
