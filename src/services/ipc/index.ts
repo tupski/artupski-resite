@@ -7,6 +7,8 @@ export {
   processWrite,
   processKill,
   processStatus,
+  assetWrite,
+  assetDelete,
   onProcessEvent
 } from './commands';
 export type {

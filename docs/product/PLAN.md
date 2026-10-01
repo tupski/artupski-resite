@@ -226,6 +226,17 @@ The phase is delivered as a **cryptographically-bounded session core** that reus
 - **Potential Risks**: High memory usage when capturing high-DPI full-page screenshots.
 - **Verification**: Inspect generated multi-viewport screenshots in UI gallery.
 
+### Phase 7 Implementation Notes (as built)
+
+Delivered on top of the Phase 4 crawler; no new process manager, browser runtime, or crawler was created, and the worker protocol was extended additively (`WORKER_PROTOCOL_VERSION` stays `1`).
+
+1. **Profiles**: the canonical matrix lives in `src/services/infra/workerProtocol.ts` (`desktop` 1440×900, `tablet` 768×1024, `mobile` 375×812), validated on the wire with a 4320 dimension cap.
+2. **Worker**: the new `captureViewport` command renders ONE profile per call in a fresh isolated context (replaying an injected session read-only), returning a full-page PNG (12 MiB base64 cap; dropped with `truncated: true` beyond), a bounded visible-element map, and the page's media-query breakpoints.
+3. **Persistence**: migration `006_responsive_captures` (version 6) + `ResponsiveCaptureRepository`. Screenshots are written to disk via a new narrow sandboxed Rust `asset_write`/`asset_delete` module confined to `<app_local_data_dir>/assets`; only the relative path is stored. See `DATABASE.md` section 2.5.
+4. **Service**: `src/services/scanner/responsiveScanner.ts` runs after a **completed** crawl, gated by `scanService.runScan({ viewportProfiles })`; a per-profile failure is counted as a skip and never changes the crawl's terminal status.
+5. **UI**: the Scan screen's viewport toggles are **enabled** (previously `Deferred`), and a `ViewportPreview` gallery (backed by `src/stores/responsiveStore.ts`) renders persisted captures with honest loading/empty/error states.
+6. **Documented limitation**: the Tailwind responsive-rule synthesizer (`RESPONSIVE-SPEC.md` section 4) is **deferred**; this phase delivers the acceptance criterion's screenshots + visible element maps + detected breakpoints.
+
 ---
 
 ## Phase 8: Static Clone Engine & Local Asset Server

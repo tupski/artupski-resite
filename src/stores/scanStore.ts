@@ -10,6 +10,7 @@
 import { create } from 'zustand';
 import { eventBus, type AppEvent } from '../services/infra/eventBus';
 import { runScan, cancelScan } from '../services/scanner/scanService';
+import type { ViewportProfileName } from '../services/infra/workerProtocol';
 import { useAuthStore } from './authStore';
 import type { ScanLogEntry, ScanLogLevel, ScanProgress, ScanStatus } from '../types/scan';
 
@@ -157,6 +158,16 @@ export const useScanStore = create<ScanState>((set, get) => ({
       get().appendLog('info', 'Authenticated scan: injecting the stored session.');
     }
 
+    // Phase 7: translate the viewport toggles into the profiles the crawler
+    // should capture after a completed crawl. An all-off selection skips capture.
+    const viewportProfiles: ViewportProfileName[] = [];
+    if (configuration.viewports.desktop) viewportProfiles.push('desktop');
+    if (configuration.viewports.tablet) viewportProfiles.push('tablet');
+    if (configuration.viewports.mobile) viewportProfiles.push('mobile');
+    if (viewportProfiles.length > 0) {
+      get().appendLog('info', `Responsive capture enabled: ${viewportProfiles.join(', ')}.`);
+    }
+
     try {
       const result = await runScan({
         scanId,
@@ -164,7 +175,8 @@ export const useScanStore = create<ScanState>((set, get) => ({
         seedUrl: targetUrl,
         limits: { maxDepth: configuration.maxDepth, maxPages: configuration.maxPages },
         headless: configuration.headless,
-        authenticated
+        authenticated,
+        viewportProfiles
       });
 
       if (!result.ok) {

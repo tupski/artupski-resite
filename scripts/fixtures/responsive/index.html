@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Responsive fixture</title>
+    <style>
+      /* Two deliberate media-query breakpoints so the scanner can detect them. */
+      .hide-on-mobile { display: block; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+      @media (max-width: 768px) {
+        .hide-on-mobile { display: none; }
+        .grid { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 480px) {
+        h1 { font-size: 18px; }
+      }
+    </style>
+  </head>
+  <body>
+    <header><h1>Responsive fixture</h1></header>
+    <nav class="hide-on-mobile"><a href="/responsive">Home</a></nav>
+    <main>
+      <section class="grid">
+        <article>One</article>
+        <article>Two</article>
+        <article>Three</article>
+      </section>
+    </main>
+    <footer class="hide-on-mobile">Footer</footer>
+  </body>
+</html>

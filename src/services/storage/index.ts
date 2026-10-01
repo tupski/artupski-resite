@@ -42,6 +42,10 @@ export {
 export { AuthSessionRepository } from './repositories/authSessionRepository';
 export { ProjectRepository } from './repositories/projectRepository';
 export {
+  ResponsiveCaptureRepository,
+  type UpsertResponsiveCaptureInput
+} from './repositories/responsiveCaptureRepository';
+export {
   ScanRepository,
   type UpdateScanStatusInput,
   type UpdateScanProgressInput

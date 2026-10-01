@@ -37,6 +37,7 @@ import {
   type AuthStorageState,
   type BrowserAvailability,
   type CaptureStateResultPayload,
+  type CaptureViewportResultPayload,
   type CloseResultPayload,
   type DetectLoginResultPayload,
   type ExtractResultPayload,
@@ -47,8 +48,10 @@ import {
   type NormalizedPage,
   type PageExtraction,
   type PingResultPayload,
+  type ViewportElementNode,
   type WorkerCommandMessage,
-  type WorkerResultPayload
+  type WorkerResultPayload,
+  MAX_SCREENSHOT_BASE64_BYTES
 } from './protocol.ts';
 import { LOGIN_PROBE_EXPRESSION } from '../../services/scanner/extraction/inPageExtractor.ts';
 import { classifyIpLiteral } from '../../services/scanner/security/ipPolicy.ts';
@@ -91,6 +94,8 @@ interface PlaywrightPage {
   evaluate<T>(expression: string): Promise<T>;
   route(pattern: string, handler: (route: PlaywrightRoute) => void | Promise<void>): Promise<void>;
   close(): Promise<void>;
+  /** Full-page PNG screenshot of the current page. */
+  screenshot(options: { fullPage: boolean; type: 'png' }): Promise<Uint8Array>;
 }
 
 interface PlaywrightContext {
@@ -112,7 +117,14 @@ interface PlaywrightContext {
 interface PlaywrightBrowser {
   version(): string;
   newPage(): Promise<PlaywrightPage>;
-  newContext(options?: { storageState?: unknown }): Promise<PlaywrightContext>;
+  newContext(options?: {
+    storageState?: unknown;
+    viewport?: { width: number; height: number };
+    deviceScaleFactor?: number;
+    isMobile?: boolean;
+    hasTouch?: boolean;
+    userAgent?: string;
+  }): Promise<PlaywrightContext>;
   close(): Promise<void>;
 }
 
@@ -140,6 +152,12 @@ interface ActiveSession {
    * context.
    */
   capture: boolean;
+  /**
+   * The injected storage state for this session, retained in memory ONLY so a
+   * responsive-capture context can replay the same authenticated session. It is
+   * never written to disk, logged, or echoed back.
+   */
+  authState: AuthStorageState | null;
   /** Abort controller for the in-flight extraction, if any. */
   activeAbort: AbortController | null;
 }
@@ -281,6 +299,7 @@ async function handleLaunch(message: WorkerCommandMessage): Promise<WorkerResult
     engine: 'chromium',
     version,
     capture,
+    authState: message.payload.authState ?? null,
     activeAbort: null
   });
   emitEvent('browser.launched', {
@@ -835,6 +854,206 @@ async function handleDetectLogin(message: WorkerCommandMessage): Promise<WorkerR
   }
 }
 
+/**
+ * In-page probe that returns the layout of anchor nodes plus the media-query
+ * breakpoints the page's applied styles declare. Self-contained (no closures);
+ * read-only - it never executes page scripts or reads credentials.
+ */
+const VIEWPORT_PROBE_SOURCE = `(() => {
+  var MAX_NODES = 400;
+  var results = [];
+  var nodes = document.querySelectorAll('header, nav, main, section, article, aside, footer, [class], [id]');
+  var truncate = false;
+  for (var i = 0; i < nodes.length; i += 1) {
+    if (results.length >= MAX_NODES) { truncate = true; break; }
+    var el = nodes[i];
+    var rect = el.getBoundingClientRect();
+    var style = window.getComputedStyle(el);
+    var cls = (typeof el.className === 'string' ? el.className : '').trim().split(/\\s+/)[0] || '';
+    var tag = el.tagName.toLowerCase();
+    results.push({
+      key: tag + (cls ? '.' + cls : '') + '#' + i,
+      tagName: tag,
+      selector: tag + (cls ? '.' + cls : ''),
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      visible: style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0,
+      display: style.display,
+      fontSize: parseFloat(style.fontSize) || 0
+    });
+  }
+  var breakpoints = {};
+  try {
+    for (var s = 0; s < document.styleSheets.length; s += 1) {
+      var sheet = document.styleSheets[s];
+      var rules = null;
+      try { rules = sheet.cssRules; } catch (e) { rules = null; }
+      if (!rules) { continue; }
+      for (var r = 0; r < rules.length; r += 1) {
+        var rule = rules[r];
+        if (rule && rule.media && rule.media.mediaText) {
+          var m = rule.media.mediaText.match(/(\\d+)px/g) || [];
+          for (var k = 0; k < m.length; k += 1) { breakpoints[parseInt(m[k], 10)] = true; }
+        }
+      }
+    }
+  } catch (e) { /* cross-origin sheets are skipped */ }
+  var bp = Object.keys(breakpoints).map(function (v) { return parseInt(v, 10); }).sort(function (a, b) { return a - b; });
+  return { elements: results, breakpoints: bp, truncated: truncate };
+})()`;
+
+/**
+ * Render `url` under ONE emulation profile in a fresh context and return a
+ * full-page screenshot plus a bounded visible-element map and the media-query
+ * breakpoints the page declares (RESPONSIVE-SPEC sections 1-2). The context is
+ * isolated and always closed; the screenshot is returned as base64 for the host
+ * to persist and is dropped (with `truncated:true`) when it exceeds the cap.
+ */
+async function handleCaptureViewport(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
+  if (message.payload.command !== 'captureViewport') {
+    throw new Error('captureViewport handler received the wrong command');
+  }
+  const session = sessions.get(message.payload.sessionId);
+  if (!session) {
+    throw Object.assign(new Error(`Unknown session "${message.payload.sessionId}".`), {
+      code: 'PLAYWRIGHT_CRASHED'
+    });
+  }
+
+  const requestedUrl = message.payload.url;
+  const profile = message.payload.profile;
+  const trustedOrigins = [new URL(requestedUrl).origin];
+  const decision = await evaluateUrlPolicy(requestedUrl, { resolveHost, trustedOrigins });
+  if (!decision.allowed) {
+    throw Object.assign(new Error(`Navigation blocked by the URL policy (${decision.reason}).`), {
+      code: 'INVALID_URL',
+      detail: decision.detail
+    });
+  }
+
+  // A dedicated context per viewport, so emulation never leaks into the scan
+  // session. The injected session (if any) is replayed read-only; it is never
+  // written to disk here.
+  const contextOptions: {
+    storageState?: unknown;
+    viewport: { width: number; height: number };
+    deviceScaleFactor: number;
+    isMobile: boolean;
+    hasTouch: boolean;
+  } = {
+    viewport: { width: profile.width, height: profile.height },
+    deviceScaleFactor: profile.deviceScaleFactor,
+    isMobile: profile.isMobile,
+    hasTouch: profile.hasTouch
+  };
+  if (session.authState) {
+    contextOptions.storageState = toPlaywrightStorageState(session.authState);
+  }
+
+  const context = await session.browser.newContext(contextOptions);
+  const page = await context.newPage();
+  try {
+    const abort = new AbortController();
+    session.activeAbort = abort;
+    await installRouteGuard(page, new Set<string>([new URL(requestedUrl).hostname.toLowerCase()]));
+
+    let response: PlaywrightResponse | null = null;
+    let finalUrl = requestedUrl;
+    let status: number | null = null;
+    try {
+      response = await page.goto(requestedUrl, {
+        timeout: clampTimeout(message.payload.timeoutMs),
+        waitUntil: 'load'
+      });
+      finalUrl = page.url();
+      status = response?.status() ?? null;
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : 'Navigation failed.';
+      if (abort.signal.aborted) {
+        throw Object.assign(new Error('Viewport capture was cancelled.'), {
+          code: 'USER_CANCELLED'
+        });
+      }
+      if (/timeout/i.test(messageText)) {
+        throw Object.assign(new Error('Viewport capture timed out.'), {
+          code: 'CONNECTION_TIMED_OUT'
+        });
+      }
+      throw error;
+    }
+
+    let probe: { elements: ViewportElementNode[]; breakpoints: number[]; truncated: boolean } = {
+      elements: [],
+      breakpoints: [],
+      truncated: false
+    };
+    try {
+      // The probe is an arrow-function expression; Playwright invokes it. Guard
+      // the result so a non-object return (or a cross-origin failure) never
+      // leaves `probe` undefined.
+      const raw = await page.evaluate<unknown>(VIEWPORT_PROBE_SOURCE);
+      if (isPlainRecord(raw)) {
+        probe = {
+          elements: Array.isArray(raw.elements) ? (raw.elements as ViewportElementNode[]) : [],
+          breakpoints: Array.isArray(raw.breakpoints) ? (raw.breakpoints as number[]) : [],
+          truncated: raw.truncated === true
+        };
+      } else {
+        probe = { elements: [], breakpoints: [], truncated: true };
+      }
+    } catch {
+      probe = { elements: [], breakpoints: [], truncated: true };
+    }
+
+    let screenshotBase64: string | null = null;
+    let truncated = probe.truncated === true;
+    try {
+      const png = await page.screenshot({ fullPage: true, type: 'png' });
+      const base64 = Buffer.from(png).toString('base64');
+      if (base64.length <= MAX_SCREENSHOT_BASE64_BYTES) {
+        screenshotBase64 = base64;
+      } else {
+        truncated = true;
+      }
+    } catch {
+      truncated = true;
+    }
+
+    const payload: CaptureViewportResultPayload = {
+      command: 'captureViewport',
+      sessionId: message.payload.sessionId,
+      url: requestedUrl,
+      finalUrl,
+      status,
+      profile,
+      screenshotBase64,
+      detectedBreakpoints: Array.isArray(probe.breakpoints) ? probe.breakpoints : [],
+      elements: Array.isArray(probe.elements)
+        ? probe.elements.map((node) => ({
+            key: String(node.key),
+            tagName: String(node.tagName),
+            selector: String(node.selector),
+            x: Number(node.x) || 0,
+            y: Number(node.y) || 0,
+            width: Number(node.width) || 0,
+            height: Number(node.height) || 0,
+            visible: node.visible === true,
+            display: String(node.display),
+            fontSize: Number(node.fontSize) || 0
+          }))
+        : [],
+      truncated
+    };
+    return payload;
+  } finally {
+    session.activeAbort = null;
+    await page.close().catch(() => undefined);
+    await context.close().catch(() => undefined);
+  }
+}
+
 async function dispatch(message: WorkerCommandMessage): Promise<void> {
   try {
     let payload: WorkerResultPayload;
@@ -862,6 +1081,9 @@ async function dispatch(message: WorkerCommandMessage): Promise<void> {
         break;
       case 'captureState':
         payload = await handleCaptureState(message);
+        break;
+      case 'captureViewport':
+        payload = await handleCaptureViewport(message);
         break;
       default:
         throw Object.assign(new Error('Unsupported command.'), {

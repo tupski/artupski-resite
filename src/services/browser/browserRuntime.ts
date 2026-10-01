@@ -28,11 +28,13 @@ import {
   type BrowserAvailability,
   type BrowserEngine,
   type CaptureStateResultPayload,
+  type CaptureViewportResultPayload,
   type CloseResultPayload,
   type DetectLoginResultPayload,
   type LaunchResultPayload,
   type NavigateResultPayload,
   type PingResultPayload,
+  type ViewportProfile,
   type WorkerCommandPayload,
   type WorkerResultPayload
 } from '../infra/workerProtocol';
@@ -347,6 +349,44 @@ export class BrowserRuntime {
         code: 'PLAYWRIGHT_CRASHED',
         category: 'browser',
         message: 'Failed to inspect the login state.'
+      });
+      this.lastError = structured;
+      return { ok: false, error: structured };
+    }
+  }
+
+  /**
+   * Capture a full-page screenshot + visible-element map for ONE viewport
+   * profile, using the session's injected state (if any). The worker creates an
+   * isolated context per call, so emulation never leaks into the scan session.
+   * The screenshot is returned as base64 for the caller to write to disk.
+   */
+  async captureViewport(
+    sessionId: string,
+    url: string,
+    profile: ViewportProfile,
+    timeoutMs = MAX_BROWSER_TIMEOUT_MS
+  ): Promise<BrowserResult<CaptureViewportResultPayload>> {
+    try {
+      const result = await this.adapter.request({
+        command: 'captureViewport',
+        sessionId,
+        url,
+        profile,
+        timeoutMs: Math.min(timeoutMs, MAX_BROWSER_TIMEOUT_MS)
+      });
+      const payload = result as CaptureViewportResultPayload;
+      if (payload.command !== 'captureViewport') {
+        throw createProcessError('WORKER_PROTOCOL_VIOLATION', {
+          message: 'Browser worker returned an unexpected result for captureViewport.'
+        });
+      }
+      return { ok: true, data: payload };
+    } catch (error) {
+      const structured = toStructuredError(error, {
+        code: 'PLAYWRIGHT_CRASHED',
+        category: 'browser',
+        message: `Failed to capture the ${profile.name} viewport.`
       });
       this.lastError = structured;
       return { ok: false, error: structured };

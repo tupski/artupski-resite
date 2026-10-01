@@ -7,12 +7,14 @@ import { Input } from '../components/ui/Input';
 import { StatusIndicator, type StatusTone } from '../components/ui/StatusIndicator';
 import { IconAlert } from '../components/ui/icons';
 import { TechnologyPanel } from '../components/scan/TechnologyPanel';
+import { ViewportPreview } from '../components/scan/ViewportPreview';
 import { AuthCapturePanel } from '../components/auth/AuthCapturePanel';
 import { SCAN_STATUS_LABEL, type ScanStatus } from '../types/scan';
 import { useScanStore } from '../stores/scanStore';
 import { useProjectsStore } from '../stores/projectsStore';
 import { useTechnologyStore } from '../stores/technologyStore';
 import { useAuthStore } from '../stores/authStore';
+import { useResponsiveStore } from '../stores/responsiveStore';
 import { validateTargetUrl } from '../lib/url';
 import { cn } from '../lib/cn';
 
@@ -70,6 +72,12 @@ export function ScanRoute() {
   const detectionsPartial = useTechnologyStore((state) => state.partial);
   const loadDetections = useTechnologyStore((state) => state.loadForScan);
   const clearDetections = useTechnologyStore((state) => state.clear);
+
+  const viewportCaptures = useResponsiveStore((state) => state.captures);
+  const viewportLoading = useResponsiveStore((state) => state.loading);
+  const viewportError = useResponsiveStore((state) => state.error);
+  const loadViewportCaptures = useResponsiveStore((state) => state.loadForScan);
+  const clearViewportCaptures = useResponsiveStore((state) => state.clear);
 
   const authMode = useAuthStore((state) => state.mode);
   const authSession = useAuthStore((state) => state.session);
@@ -139,6 +147,17 @@ export function ScanRoute() {
     const unsubscribe = useTechnologyStore.getState().watch(scanId);
     return unsubscribe;
   }, [scanId, loadDetections, clearDetections]);
+
+  // Load persisted viewport captures when a scan id appears; the database is the
+  // source of truth. The responsive step runs after the crawl completes, so this
+  // also re-checks when the scan settles.
+  useEffect(() => {
+    if (!scanId) {
+      clearViewportCaptures();
+      return;
+    }
+    void loadViewportCaptures(scanId);
+  }, [scanId, status, loadViewportCaptures, clearViewportCaptures]);
 
   // Keep the auth panel in sync with the selected project's persisted session
   // (the database is the source of truth; never a hardcoded "ready").
@@ -367,18 +386,16 @@ export function ScanRoute() {
 
           <fieldset
             className="mt-4 rounded border border-border-subtle p-3"
-            disabled
-            aria-describedby="viewports-deferred-note"
+            disabled={scanning}
+            aria-describedby="viewports-note"
           >
-            <legend className="px-1 text-caption font-medium text-text-secondary">
-              Viewports <Badge tone="neutral">Deferred</Badge>
-            </legend>
-            <div className="flex flex-wrap gap-3 pt-1 opacity-60">
+            <legend className="px-1 text-caption font-medium text-text-secondary">Viewports</legend>
+            <div className="flex flex-wrap gap-3 pt-1">
               {(
                 [
                   ['desktop', 'Desktop 1440×900'],
                   ['tablet', 'Tablet 768×1024'],
-                  ['mobile', 'Mobile 375×667']
+                  ['mobile', 'Mobile 375×812']
                 ] as const
               ).map(([key, label]) => (
                 <label key={key} className="flex items-center gap-2 text-body text-text-secondary">
@@ -386,16 +403,19 @@ export function ScanRoute() {
                     type="checkbox"
                     className="h-3.5 w-3.5 accent-brand"
                     checked={configuration.viewports[key]}
-                    disabled
-                    readOnly
+                    onChange={(event) =>
+                      updateConfiguration({
+                        viewports: { ...configuration.viewports, [key]: event.target.checked }
+                      })
+                    }
                   />
                   {label}
                 </label>
               ))}
             </div>
-            <p id="viewports-deferred-note" className="pt-2 text-caption text-text-muted">
-              Multi-viewport capture is not part of this phase, so these options do not affect the
-              crawl. They are shown for continuity only.
+            <p id="viewports-note" className="pt-2 text-caption text-text-muted">
+              Each selected viewport is captured after the crawl when it completes, producing a
+              full-page screenshot and a visible-element map for that breakpoint.
             </p>
           </fieldset>
         </Panel>
@@ -537,6 +557,19 @@ export function ScanRoute() {
               loading={detectionsLoading}
               error={detectionsError}
               partial={detectionsPartial}
+            />
+          </Panel>
+        ) : null}
+
+        {scanId ? (
+          <Panel
+            title="Responsive viewports"
+            actions={<Badge tone="neutral">{viewportCaptures.length}</Badge>}
+          >
+            <ViewportPreview
+              captures={viewportCaptures}
+              loading={viewportLoading}
+              error={viewportError}
             />
           </Panel>
         ) : null}

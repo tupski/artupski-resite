@@ -29,6 +29,25 @@ import type {
 export type SqlPrimitive = string | number | Uint8Array | null;
 export type SqlParams = SqlPrimitive[];
 
+/** Raw `responsive_captures` row shape as returned by sql.js (migration 006). */
+export interface ResponsiveCaptureRow {
+  id: string;
+  scan_id: string;
+  page_id: string;
+  url: string;
+  profile: string;
+  width: number;
+  height: number;
+  device_scale_factor: number;
+  is_mobile: number;
+  has_touch: number;
+  screenshot_path: string | null;
+  detected_breakpoints: string;
+  element_map: string;
+  truncated: number;
+  captured_at: string;
+}
+
 /** Raw `projects` row shape as returned by sql.js. */
 export interface ProjectRow {
   id: string;

@@ -61,7 +61,7 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
       message: `Command "${command}" is unavailable outside the Tauri desktop runtime.`,
       severity: 'warning',
       recoverable: true,
-      suggestedAction: 'Run the desktop shell with `npm run tauri:dev`.',
+      suggestedAction: 'Run the desktop shell with `npm run tauri:dev`.'
     });
   }
 
@@ -79,7 +79,11 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
 async function safeInvoke<T>(
   command: string,
   args?: Record<string, unknown>,
-  fallback?: { code: StructuredError['code']; category: StructuredError['category']; message: string }
+  fallback?: {
+    code: StructuredError['code'];
+    category: StructuredError['category'];
+    message: string;
+  }
 ): Promise<IpcResult<T>> {
   try {
     const data = await invokeCommand<T>(command, args);
@@ -93,15 +97,15 @@ async function safeInvoke<T>(
         message: fallback?.message ?? `IPC command "${command}" failed.`,
         severity: 'error',
         recoverable: true,
-        retryable: true,
-      }),
+        retryable: true
+      })
     };
   }
 }
 
 const PROCESS_FALLBACK = {
   code: 'PROCESS_SPAWN_FAILED',
-  category: 'process',
+  category: 'process'
 } as const;
 
 /** Native application name and version. */
@@ -116,34 +120,83 @@ export function runtimeInfo(): Promise<IpcResult<RuntimeInfo>> {
 
 /** Spawn an allowlisted worker process. Args are an array; never a shell string. */
 export function processSpawn(args: SpawnProcessArgs): Promise<IpcResult<ProcessHandleInfo>> {
-  return safeInvoke<ProcessHandleInfo>('process_spawn', { request: args }, {
-    ...PROCESS_FALLBACK,
-    message: 'Failed to spawn the worker process.'
-  });
+  return safeInvoke<ProcessHandleInfo>(
+    'process_spawn',
+    { request: args },
+    {
+      ...PROCESS_FALLBACK,
+      message: 'Failed to spawn the worker process.'
+    }
+  );
 }
 
 /** Write a bounded string to a managed worker's stdin. */
 export function processWrite(id: string, data: string): Promise<IpcResult<void>> {
-  return safeInvoke<void>('process_write', { id, data }, {
-    ...PROCESS_FALLBACK,
-    message: 'Failed to write to the worker process.'
-  });
+  return safeInvoke<void>(
+    'process_write',
+    { id, data },
+    {
+      ...PROCESS_FALLBACK,
+      message: 'Failed to write to the worker process.'
+    }
+  );
 }
 
 /** Terminate a managed worker. `force` also kills the child tree. */
 export function processKill(id: string, force = false): Promise<IpcResult<boolean>> {
-  return safeInvoke<boolean>('process_kill', { id, force }, {
-    ...PROCESS_FALLBACK,
-    message: 'Failed to terminate the worker process.'
-  });
+  return safeInvoke<boolean>(
+    'process_kill',
+    { id, force },
+    {
+      ...PROCESS_FALLBACK,
+      message: 'Failed to terminate the worker process.'
+    }
+  );
 }
 
 /** Query whether a managed worker is still running. */
 export function processStatus(id: string): Promise<IpcResult<ProcessStatusInfo>> {
-  return safeInvoke<ProcessStatusInfo>('process_status', { id }, {
-    ...PROCESS_FALLBACK,
-    message: 'Failed to query the worker process status.'
-  });
+  return safeInvoke<ProcessStatusInfo>(
+    'process_status',
+    { id },
+    {
+      ...PROCESS_FALLBACK,
+      message: 'Failed to query the worker process status.'
+    }
+  );
+}
+
+const ASSET_FALLBACK = {
+  code: 'STORAGE_WRITE_FAILED',
+  category: 'io'
+} as const;
+
+/**
+ * Write binary asset bytes (e.g. a responsive screenshot) beneath the app's
+ * sandboxed `assets/` root. `relative` is a caller-supplied RELATIVE path; the
+ * Rust `asset_write` command rejects absolute paths and any `..` component.
+ */
+export function assetWrite(relative: string, data: Uint8Array): Promise<IpcResult<string>> {
+  return safeInvoke<string>(
+    'asset_write',
+    { relative, data: Array.from(data) },
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to write the asset file.'
+    }
+  );
+}
+
+/** Delete a previously written asset. A missing file is treated as success. */
+export function assetDelete(relative: string): Promise<IpcResult<void>> {
+  return safeInvoke<void>(
+    'asset_delete',
+    { relative },
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to delete the asset file.'
+    }
+  );
 }
 
 /** Payload of the Rust `process://stdout` / `process://stderr` events. */

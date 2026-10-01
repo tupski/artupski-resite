@@ -43,7 +43,15 @@ export type BrowserEngine = 'chromium';
 
 /** The closed set of operations the worker understands. */
 export type WorkerCommandName =
-  'ping' | 'launch' | 'navigate' | 'close' | 'extract' | 'abort' | 'detectLogin' | 'captureState';
+  | 'ping'
+  | 'launch'
+  | 'navigate'
+  | 'close'
+  | 'extract'
+  | 'abort'
+  | 'detectLogin'
+  | 'captureState'
+  | 'captureViewport';
 
 /**
  * A per-domain storage state the host injects into a browser context.
@@ -89,6 +97,37 @@ export const DEFAULT_EXTRACTABLE_CONTENT_TYPES: readonly string[] = [
 
 /** Hard ceiling on the number of redirects a single extraction may follow. */
 export const MAX_EXTRACT_REDIRECTS = 5;
+
+/** Upper bound for any viewport width/height (defends against pathological emulation). */
+export const MAX_VIEWPORT_DIMENSION = 4320;
+
+/**
+ * Upper bound for a captured screenshot payload (12 MiB of base64 PNG). The
+ * worker drops the image (keeping the element map) when a capture exceeds this,
+ * so one pathological page cannot exhaust the stdio frame budget.
+ */
+export const MAX_SCREENSHOT_BASE64_BYTES = 12 * 1024 * 1024;
+
+/** The standard responsive profiles (RESPONSIVE-SPEC section 1.1). Desktop first. */
+export const RESPONSIVE_VIEWPORT_PROFILES: readonly ViewportProfile[] = [
+  {
+    name: 'desktop',
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    isMobile: false,
+    hasTouch: false
+  },
+  {
+    name: 'tablet',
+    width: 768,
+    height: 1024,
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true
+  },
+  { name: 'mobile', width: 375, height: 812, deviceScaleFactor: 3, isMobile: true, hasTouch: true }
+];
 
 // ---------------------------------------------------------------------------
 // Command payloads (host -> worker)
@@ -189,6 +228,41 @@ export interface CaptureStateCommandPayload {
   scopeHost: string;
 }
 
+/** The three standard responsive viewport profiles (RESPONSIVE-SPEC section 1.1). */
+export type ViewportProfileName = 'desktop' | 'tablet' | 'mobile';
+
+/**
+ * A concrete emulation profile. Bounded by the host before it is ever sent: the
+ * width/height must fall inside `MAX_VIEWPORT_DIMENSION`. The worker only ever
+ * receives one profile per `captureViewport` so a single navigation/screenshot
+ * cannot be conflated with another's state.
+ */
+export interface ViewportProfile {
+  name: ViewportProfileName;
+  width: number;
+  height: number;
+  deviceScaleFactor: number;
+  isMobile: boolean;
+  hasTouch: boolean;
+}
+
+/**
+ * Capture a full-page screenshot plus a visible-element map for ONE viewport
+ * profile (RESPONSIVE-SPEC section 2.1). The screenshot is returned as a bounded
+ * base64 PNG; the host writes it to disk. The element map records each anchor
+ * node's bounding box and visibility so the host can diff breakpoints. No secret
+ * material is involved and the page is never scripted beyond the read-only probes.
+ */
+export interface CaptureViewportCommandPayload {
+  command: 'captureViewport';
+  sessionId: string;
+  url: string;
+  /** Navigation timeout in ms. The worker clamps this to <= 30000. */
+  timeoutMs: number;
+  /** The single emulation profile to render this page under. */
+  profile: ViewportProfile;
+}
+
 export type WorkerCommandPayload =
   | PingCommandPayload
   | LaunchCommandPayload
@@ -197,7 +271,8 @@ export type WorkerCommandPayload =
   | ExtractCommandPayload
   | AbortCommandPayload
   | DetectLoginCommandPayload
-  | CaptureStateCommandPayload;
+  | CaptureStateCommandPayload
+  | CaptureViewportCommandPayload;
 
 // ---------------------------------------------------------------------------
 // Result payloads (worker -> host)
@@ -278,6 +353,41 @@ export interface CaptureStateResultPayload {
   originCount: number;
 }
 
+/** One anchor node's layout at a specific viewport (RESPONSIVE-SPEC section 2.1). */
+export interface ViewportElementNode {
+  /** Stable-ish identity derived from tag + first class + index (no PII). */
+  key: string;
+  tagName: string;
+  selector: string;
+  /** Bounding box in CSS pixels. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  visible: boolean;
+  display: string;
+  /** Computed font size in px, for typography diffing. */
+  fontSize: number;
+}
+
+export interface CaptureViewportResultPayload {
+  command: 'captureViewport';
+  sessionId: string;
+  url: string;
+  finalUrl: string;
+  status: number | null;
+  /** Echo of the emulated profile so the host can key the capture. */
+  profile: ViewportProfile;
+  /** Bounded base64 PNG, or null when the capture was skipped/too large. */
+  screenshotBase64: string | null;
+  /** Media-query breakpoints detected in the page's applied styles (px, sorted). */
+  detectedBreakpoints: number[];
+  /** Bounded list of anchor nodes with their layout at this viewport. */
+  elements: ViewportElementNode[];
+  /** True when the element list or screenshot was truncated by a cap. */
+  truncated: boolean;
+}
+
 export type WorkerResultPayload =
   | PingResultPayload
   | LaunchResultPayload
@@ -286,7 +396,8 @@ export type WorkerResultPayload =
   | ExtractResultPayload
   | AbortResultPayload
   | DetectLoginResultPayload
-  | CaptureStateResultPayload;
+  | CaptureStateResultPayload
+  | CaptureViewportResultPayload;
 
 // ---------------------------------------------------------------------------
 // Event / log / error payloads
@@ -390,7 +501,8 @@ const COMMAND_NAMES: readonly WorkerCommandName[] = [
   'extract',
   'abort',
   'detectLogin',
-  'captureState'
+  'captureState',
+  'captureViewport'
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -437,6 +549,30 @@ export function isAuthStorageState(value: unknown): value is AuthStorageState {
       isNonEmptyString(origin.origin) &&
       isRecord(origin.localStorage) &&
       (origin.sessionStorage === undefined || isRecord(origin.sessionStorage))
+  );
+}
+
+/** Structural + bounded check for a viewport profile. */
+export function isViewportProfile(value: unknown): value is ViewportProfile {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    (value.name === 'desktop' || value.name === 'tablet' || value.name === 'mobile') &&
+    typeof value.width === 'number' &&
+    Number.isFinite(value.width) &&
+    value.width > 0 &&
+    value.width <= MAX_VIEWPORT_DIMENSION &&
+    typeof value.height === 'number' &&
+    Number.isFinite(value.height) &&
+    value.height > 0 &&
+    value.height <= MAX_VIEWPORT_DIMENSION &&
+    typeof value.deviceScaleFactor === 'number' &&
+    Number.isFinite(value.deviceScaleFactor) &&
+    value.deviceScaleFactor >= 1 &&
+    value.deviceScaleFactor <= 4 &&
+    typeof value.isMobile === 'boolean' &&
+    typeof value.hasTouch === 'boolean'
   );
 }
 
@@ -493,6 +629,14 @@ function validateCommandPayload(payload: unknown): boolean {
       );
     case 'captureState':
       return isNonEmptyString(payload.sessionId) && isNonEmptyString(payload.scopeHost);
+    case 'captureViewport':
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNonEmptyString(payload.url) &&
+        typeof payload.timeoutMs === 'number' &&
+        Number.isFinite(payload.timeoutMs) &&
+        isViewportProfile(payload.profile)
+      );
     default:
       return false;
   }
@@ -539,6 +683,27 @@ function validateResultPayload(payload: unknown): boolean {
         isAuthStorageState(payload.storageState) &&
         typeof payload.cookieCount === 'number' &&
         typeof payload.originCount === 'number'
+      );
+    case 'captureViewport':
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNonEmptyString(payload.url) &&
+        isNonEmptyString(payload.finalUrl) &&
+        (payload.status === null || typeof payload.status === 'number') &&
+        isViewportProfile(payload.profile) &&
+        (payload.screenshotBase64 === null || typeof payload.screenshotBase64 === 'string') &&
+        Array.isArray(payload.detectedBreakpoints) &&
+        payload.detectedBreakpoints.every((entry) => typeof entry === 'number') &&
+        Array.isArray(payload.elements) &&
+        payload.elements.every(
+          (entry) =>
+            isRecord(entry) &&
+            typeof entry.key === 'string' &&
+            typeof entry.tagName === 'string' &&
+            typeof entry.selector === 'string' &&
+            typeof entry.visible === 'boolean'
+        ) &&
+        typeof payload.truncated === 'boolean'
       );
     default:
       return false;

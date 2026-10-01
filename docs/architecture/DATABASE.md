@@ -76,6 +76,16 @@ The authentication phase adds two **new, forward-only** migrations; `001`–`003
 - **Repository**: `AuthSessionRepository` (`src/services/storage/repositories/authSessionRepository.ts`) owns all SQL for `auth_sessions` - `saveSession` (deactivates the prior active row in one transaction, then inserts), `findActive`, `listByProject`, `deleteByProject`, `deleteById`, `purgeExpired`, and `isExpired`. `ScanPageRepository` gains `authStatus` on upsert/read.
 - **Retention/deletion**: a session is deleted by "Clear Session" (`deleteByProject`, a cryptographic deletion) or by the pre-crawl `purgeExpired`; `ON DELETE CASCADE` removes sessions with their project. Expiry comparison uses the same ISO-8601 UTC format the service writes.
 
+### 2.5 Responsive Viewport Captures Implementation Note (as built, Phase 7)
+
+The responsive phase adds one **forward-only** migration; `001`–`005` are never edited.
+
+- **Migration `006_responsive_captures.ts` (version `6`)** creates `responsive_captures`:
+  - Columns: `id`, `scan_id` (`REFERENCES scans(id) ON DELETE CASCADE`), `page_id` (`REFERENCES scan_pages(id) ON DELETE CASCADE`), `url`, `profile`, `width`, `height`, `device_scale_factor`, `is_mobile`, `has_touch`, `screenshot_path` (nullable - the PNG lives on disk, NOT in the DB), `detected_breakpoints` (JSON text), `element_map` (JSON text), `truncated`, `captured_at`.
+  - **Indexes**: a UNIQUE `idx_responsive_captures_page_profile (page_id, profile)` so re-running a scan replaces a page's capture per profile rather than duplicating, plus `idx_responsive_captures_scan_id`.
+- **Screenshot storage**: PNGs are written through the sandboxed Rust `asset_write` command under `<app_local_data_dir>/assets/responsive/<scanId>/`; only the relative path is persisted. This keeps the database small (the DB file is exported as a single WASM buffer).
+- **Repository**: `ResponsiveCaptureRepository` (`src/services/storage/repositories/responsiveCaptureRepository.ts`) owns all SQL for the table - `upsert` (one row per page+profile), `listByScan`, `listByPage`, `countByScan`, `deleteByScan`. JSON columns are parsed defensively (a malformed value yields an empty list, never a throw).
+
 ---
 
 ## 3. Relational Schema & Table Definitions

@@ -138,6 +138,44 @@ export interface AppSetting {
   updatedAt: string;
 }
 
+/** One anchor node's layout at a captured viewport (RESPONSIVE-SPEC section 2.1). */
+export interface ResponsiveElementNode {
+  key: string;
+  tagName: string;
+  selector: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  visible: boolean;
+  display: string;
+  fontSize: number;
+}
+
+/**
+ * A responsive viewport capture (migration 006). One row per (page, profile):
+ * the emulated dimensions, detected media-query breakpoints, a bounded visible
+ * element map, and the on-disk path to the full-page screenshot. The screenshot
+ * itself is NOT stored in SQLite.
+ */
+export interface ResponsiveCapture {
+  id: string;
+  scanId: string;
+  pageId: string;
+  url: string;
+  profile: string;
+  width: number;
+  height: number;
+  deviceScaleFactor: number;
+  isMobile: boolean;
+  hasTouch: boolean;
+  screenshotPath: string | null;
+  detectedBreakpoints: number[];
+  elementMap: ResponsiveElementNode[];
+  truncated: boolean;
+  capturedAt: string;
+}
+
 /**
  * A captured authentication session (migration 004). The encrypted envelope is
  * split into `ciphertext`/`iv`/`authTag` (Base64) plus the per-project `salt`

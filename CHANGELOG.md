@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 7 - responsive layout & viewport analysis
+
+Multi-viewport capture on top of the Phase 4 crawler. **No new process manager, browser runtime, or crawler was created**; the worker protocol was extended additively and `WORKER_PROTOCOL_VERSION` stays `1`.
+
+- **Worker/protocol**: new `captureViewport` command renders one page under a single emulation profile (desktop 1440×900, tablet 768×1024, mobile 375×812) in a fresh isolated context and returns a full-page PNG (base64, bounded), a bounded visible-element map, and the media-query breakpoints the page declares. Profiles are validated on the wire (`isViewportProfile`, dimension cap 4320). The screenshot is dropped (with `truncated: true`) when it exceeds 12 MiB.
+- **Persistence**: forward-only migration `006_responsive_captures.ts` (version 6) adds `responsive_captures` (one row per page + profile, `screenshot_path` + JSON `detected_breakpoints`/`element_map`, `ON DELETE CASCADE`); `ResponsiveCaptureRepository` owns all its SQL. Screenshots are written to disk (a new sandboxed Rust `asset_write`/`asset_delete` module confined to `<app_local_data_dir>/assets`, rejecting absolute paths and `..`), so the database stays small.
+- **Service**: `src/services/scanner/responsiveScanner.ts` orchestrates capture after a completed crawl (opt-in via `scanService.runScan({ viewportProfiles })`), writing screenshots and persisting metadata. A per-profile failure is recorded as a skip and never changes the crawl's terminal status.
+- **UI**: the Scan screen's viewport toggles are now enabled (were `Deferred`); a `ViewportPreview` gallery (`src/components/scan/ViewportPreview.tsx`, backed by `src/stores/responsiveStore.ts`) shows per-breakpoint captures with honest loading/empty/error states. No screenshot or breakpoint is fabricated.
+- **Events**: `responsive.captured` added to the taxonomy (counts only, no secret material).
+- **Tests**: profile selection + path sanitisation + orchestration units, migration + repository (+ cascade/reopen) tests, protocol validation tests, and an **opt-in real-Chromium** E2E (`responsiveCapture.e2e.test.ts`) that asserts the desktop and mobile captures are distinct (different screenshot bytes; `nav` visible on desktop, hidden on mobile) and that media-query breakpoints are detected.
+- **Documented limitation**: the Tailwind responsive-rule synthesizer (inferred `hidden md:flex` classes; `desktopPattern`/`mobilePattern` classification) from `RESPONSIVE-SPEC.md` section 4 is deferred to a later phase. This phase delivers the acceptance criterion's screenshots + visible-element maps + detected breakpoints.
+
 ### Phase 5 - authentication & session scanning
 
 Authentication and session scanning on top of the Phase 3 browser foundation and Phase 4 crawler. **No new process manager, browser runtime, or crawler was created**; the worker protocol was extended additively and `WORKER_PROTOCOL_VERSION` stays `1`. A captured session is encrypted at rest, injected into an isolated browser context, and never logged or transmitted.

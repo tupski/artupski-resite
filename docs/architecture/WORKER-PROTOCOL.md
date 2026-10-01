@@ -36,7 +36,7 @@ interface WorkerEnvelope<TType, TPayload> {
 
 | Type | Direction | Purpose |
 | :--- | :--- | :--- |
-| `command` | host → worker | An operation to perform (`ping`, `launch`, `navigate`, `close`, `extract`, `abort`, `detectLogin`, `captureState`). |
+| `command` | host → worker | An operation to perform (`ping`, `launch`, `navigate`, `close`, `extract`, `abort`, `detectLogin`, `captureState`, `captureViewport`). |
 | `result` | worker → host | The correlated outcome of a command (matched by `id`). May carry `error`. |
 | `event` | worker → host | Asynchronous worker telemetry (e.g. `browser.launched`). |
 | `log` | worker → host | Structured log line (level + message + optional metadata). |
@@ -75,6 +75,7 @@ Phase 3 implements `ping` / `launch` / `navigate` / `close`. Phase 4 (workstream
 | `abort` | `{ sessionId }` | `{ sessionId }` |
 | `detectLogin` | `{ sessionId, url, timeoutMs }` | `{ sessionId, url, finalUrl, status, signals }` — boolean presence only; no page data. |
 | `captureState` | `{ sessionId, scopeHost }` | `{ sessionId, scopeHost, storageState, cookieCount, originCount }` — interactive capture snapshot, host-scoped. |
+| `captureViewport` | `{ sessionId, url, timeoutMs, profile }` | `{ sessionId, url, finalUrl, status, profile, screenshotBase64, detectedBreakpoints, elements, truncated }` — one viewport's screenshot + visible-element map (Phase 7). |
 
 - `navigate.timeoutMs` and `extract.timeoutMs` are **clamped to ≤ 30 000 ms** by both the worker and the host client (AGENTS.md section 4, "Zero Headless Hangs").
 - `launch` throws `BROWSER_NOT_INSTALLED` when no Chromium build is present and no explicit `executablePath` was supplied.

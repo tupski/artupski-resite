@@ -25,13 +25,22 @@ describe('workerProtocol versioning', () => {
   it('stamps the protocol version on every built message', () => {
     expect(createCommandMessage({ command: 'ping' }).protocolVersion).toBe(WORKER_PROTOCOL_VERSION);
     expect(createEventMessage({ event: 'x' }).protocolVersion).toBe(WORKER_PROTOCOL_VERSION);
-    expect(createLogMessage({ level: 'info', message: 'x' }).protocolVersion).toBe(WORKER_PROTOCOL_VERSION);
-    expect(createErrorMessage({ code: 'X', message: 'x' }).protocolVersion).toBe(WORKER_PROTOCOL_VERSION);
+    expect(createLogMessage({ level: 'info', message: 'x' }).protocolVersion).toBe(
+      WORKER_PROTOCOL_VERSION
+    );
+    expect(createErrorMessage({ code: 'X', message: 'x' }).protocolVersion).toBe(
+      WORKER_PROTOCOL_VERSION
+    );
   });
 
   it('rejects an unknown protocol version', () => {
     const result = parseMessage(
-      JSON.stringify({ protocolVersion: 999, id: 'a', type: 'command', payload: { command: 'ping' } })
+      JSON.stringify({
+        protocolVersion: 999,
+        id: 'a',
+        type: 'command',
+        payload: { command: 'ping' }
+      })
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -97,7 +106,12 @@ describe('workerProtocol validation', () => {
 
   it('rejects an unknown message type', () => {
     const result = parseMessage(
-      JSON.stringify({ protocolVersion: WORKER_PROTOCOL_VERSION, id: 'a', type: 'bogus', payload: {} })
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'a',
+        type: 'bogus',
+        payload: {}
+      })
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -134,7 +148,11 @@ describe('workerProtocol validation', () => {
 
   it('rejects a missing correlation id', () => {
     const result = parseMessage(
-      JSON.stringify({ protocolVersion: WORKER_PROTOCOL_VERSION, type: 'command', payload: { command: 'ping' } })
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: 'command',
+        payload: { command: 'ping' }
+      })
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -150,6 +168,52 @@ describe('workerProtocol validation', () => {
       payload: { command: 'ping', pong: true, workerVersion: '0.1.0' }
     });
     expect(validation.ok).toBe(true);
+  });
+
+  it('accepts a bounded captureViewport command', () => {
+    const validation = validateMessage({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      id: 'cv',
+      type: 'command',
+      payload: {
+        command: 'captureViewport',
+        sessionId: 's',
+        url: 'https://app.example.com',
+        timeoutMs: 20_000,
+        profile: {
+          name: 'mobile',
+          width: 375,
+          height: 812,
+          deviceScaleFactor: 3,
+          isMobile: true,
+          hasTouch: true
+        }
+      }
+    });
+    expect(validation.ok).toBe(true);
+  });
+
+  it('rejects a captureViewport command with an out-of-bounds profile', () => {
+    const validation = validateMessage({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      id: 'cv',
+      type: 'command',
+      payload: {
+        command: 'captureViewport',
+        sessionId: 's',
+        url: 'https://app.example.com',
+        timeoutMs: 20_000,
+        profile: {
+          name: 'mobile',
+          width: 999_999,
+          height: 812,
+          deviceScaleFactor: 3,
+          isMobile: true,
+          hasTouch: true
+        }
+      }
+    });
+    expect(validation.ok).toBe(false);
   });
 
   it('rejects a malformed error field', () => {

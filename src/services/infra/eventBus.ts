@@ -77,7 +77,8 @@ export type AppEventType =
   | 'browser.session_started'
   | 'browser.session_closed'
   | 'browser.capture_opened'
-  | 'browser.capture_closed';
+  | 'browser.capture_closed'
+  | 'responsive.captured';
 
 /** Base envelope carried by every event (EVENT-SYSTEM.md section 3). */
 export interface BaseEventPayload {
@@ -299,6 +300,15 @@ export interface TechnologyDetectedPayload extends BaseEventPayload {
   version: string | null;
 }
 
+/** Responsive viewport capture completed (Phase 7). */
+export interface ResponsiveCapturedPayload extends BaseEventPayload {
+  domain: 'responsive';
+  scanId: string;
+  captured: number;
+  skipped: number;
+  profiles: string[];
+}
+
 export interface TechnologyScanCompletedPayload extends BaseEventPayload {
   domain: 'technology';
   scanId: string;
@@ -332,6 +342,7 @@ export interface AppEventPayloadMap {
   // Interactive capture carries NO secret: only the opaque session id.
   'browser.capture_opened': BrowserSessionPayload;
   'browser.capture_closed': BrowserSessionPayload;
+  'responsive.captured': ResponsiveCapturedPayload;
   'scanner.started': ScannerStartedPayload;
   'scanner.page_discovered': ScannerPageDiscoveredPayload;
   'scanner.page_started': ScannerPageStartedPayload;

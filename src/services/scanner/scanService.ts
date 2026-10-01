@@ -29,10 +29,11 @@ import { storageService } from '../storage';
 import { projectService } from '../projects/projectService';
 import { getBrowserRuntime, type BrowserRuntime } from '../browser';
 import { loadSessionForScan } from '../auth/authSessionService';
-import type { AuthStorageState } from '../infra/workerProtocol';
+import type { AuthStorageState, ViewportProfileName } from '../infra/workerProtocol';
 import { ScannerWorkerClient } from './scannerWorkerClient';
 import { createCrawlerService, createStorageCrawlPersistence } from './crawlerFactory';
 import type { CrawlResult, CrawlerService } from './crawlerService';
+import { runResponsiveScan } from './responsiveScanner';
 import { createScannerError } from './errors';
 import { createProcessError } from '../infra/processErrors';
 import { createStorageError } from '../storage/errors';
@@ -57,6 +58,11 @@ export interface ScanRunRequest {
    * false/omitted the run is a normal unauthenticated crawl (unchanged).
    */
   authenticated?: boolean;
+  /**
+   * Which viewport profiles to capture after the crawl (Phase 7). An empty or
+   * omitted list skips responsive capture entirely (the unchanged behaviour).
+   */
+  viewportProfiles?: ViewportProfileName[];
 }
 
 export interface ScanRunOutcome {
@@ -206,6 +212,33 @@ export async function runScan(request: ScanRunRequest): Promise<ScanServiceResul
         ...(request.limits?.maxPages !== undefined ? { maxPages: request.limits.maxPages } : {})
       }
     });
+
+    // Responsive viewport capture (Phase 7): only for a completed crawl, and
+    // only when the caller requested profiles. A capture failure is reported in
+    // the outcome but never changes the crawl's terminal status.
+    const requestedProfiles = request.viewportProfiles ?? [];
+    if (result.status === 'completed' && requestedProfiles.length > 0) {
+      const pages = await storageService.getRepositories().pages.listByScan(result.scanId);
+      const capturable = pages
+        .filter((page) => page.status === 'completed')
+        .map((page) => ({ id: page.id, url: page.finalUrl || page.url }));
+      const responsive = await runResponsiveScan(
+        {
+          scanId: result.scanId,
+          projectId: request.projectId,
+          sessionId,
+          pages: capturable,
+          profiles: requestedProfiles
+        },
+        runtime
+      );
+      logger.child('scan').info('Responsive capture summary', {
+        scanId: result.scanId,
+        captured: responsive.captured,
+        skipped: responsive.skipped
+      });
+    }
+
     return { ok: true, data: toOutcome(result, authenticated) };
   } catch (error) {
     // The service already maps expected failures into `CrawlResult`; this guard

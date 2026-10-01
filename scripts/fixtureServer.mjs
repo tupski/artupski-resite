@@ -40,7 +40,10 @@ const FILE_ROUTES = new Map([
   // Auth fixtures for the interactive capture flow. No real credentials.
   ['/auth/login', join(FIXTURES_DIR, 'auth', 'login.html')],
   ['/auth/public', join(FIXTURES_DIR, 'auth', 'public.html')],
-  ['/auth/protected', join(FIXTURES_DIR, 'auth', 'protected.html')]
+  ['/auth/protected', join(FIXTURES_DIR, 'auth', 'protected.html')],
+  // Responsive fixture with deliberate media-query breakpoints (Phase 7).
+  ['/responsive', join(FIXTURES_DIR, 'responsive', 'index.html')],
+  ['/responsive/', join(FIXTURES_DIR, 'responsive', 'index.html')]
 ]);
 
 /**
@@ -143,7 +146,10 @@ async function handleRequest(request, response) {
   }
 
   if (pathname === '/crawler/binary') {
-    response.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' });
+    response.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'cache-control': 'no-store'
+    });
     response.end(Buffer.from([0x00, 0x01, 0x02, 0x03]));
     return;
   }
@@ -209,7 +215,8 @@ export function startFixtureServer(options = {}) {
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === normalize(process.argv[1]);
 if (isMain) {
   const portFlagIndex = process.argv.indexOf('--port');
-  const port = portFlagIndex !== -1 ? Number(process.argv[portFlagIndex + 1]) : DEFAULT_FIXTURE_PORT;
+  const port =
+    portFlagIndex !== -1 ? Number(process.argv[portFlagIndex + 1]) : DEFAULT_FIXTURE_PORT;
   const server = await startFixtureServer({ port });
   // eslint-disable-next-line no-console -- standalone dev script, not app code.
   console.log(`Fixture server listening on ${server.url}`);

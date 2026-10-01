@@ -13,6 +13,10 @@ export {
   MAX_FRAME_BYTES,
   DEFAULT_EXTRACTABLE_CONTENT_TYPES,
   MAX_EXTRACT_REDIRECTS,
+  MAX_VIEWPORT_DIMENSION,
+  MAX_SCREENSHOT_BASE64_BYTES,
+  RESPONSIVE_VIEWPORT_PROFILES,
+  isViewportProfile,
   serializeMessage,
   parseMessage,
   validateMessage,
@@ -48,7 +52,12 @@ export type {
   DetectLoginCommandPayload,
   DetectLoginResultPayload,
   CaptureStateCommandPayload,
-  CaptureStateResultPayload
+  CaptureStateResultPayload,
+  CaptureViewportCommandPayload,
+  CaptureViewportResultPayload,
+  ViewportProfile,
+  ViewportProfileName,
+  ViewportElementNode
 } from '../../services/infra/workerProtocol.ts';
 
 // Shared pure modules the worker enforces/uses directly. Re-exported here so the

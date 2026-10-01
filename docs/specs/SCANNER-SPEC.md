@@ -530,8 +530,8 @@ Every navigation boundary the architecture can observe is validated by `src/serv
 
 ### 7.5 Deviations from this specification
 - Sections 1, 5, and 6 describe the eventual DOM/CSS/JS/network/asset/screenshot pipeline and anti-bot evasion; Phase 4 implements only the crawl + metadata extraction subset above.
-- Multi-viewport capture (section 4.2 `viewportProfiles`) is **not** honored; the UI exposes the viewport controls as disabled/deferred.
-- Screenshots and HAR are later phases.
+- Multi-viewport capture (section 4.2 `viewportProfiles`) is **now honored** (Phase 7): the worker `captureViewport` command renders a page under desktop/tablet/mobile profiles and returns a full-page screenshot + visible-element map + detected media-query breakpoints; see `docs/design/RESPONSIVE-SPEC.md` section 5. The Scan UI enables the viewport controls and shows a capture gallery.
+- HAR is a later phase. Screenshots are captured per viewport (Phase 7) but not yet diffed into Tailwind rules.
 
 ### 7.7 Authentication & session scanning (as built)
 

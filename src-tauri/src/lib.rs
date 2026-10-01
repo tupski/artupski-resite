@@ -7,6 +7,7 @@
 
 use serde::Serialize;
 
+mod asset;
 mod process;
 mod storage;
 
@@ -61,6 +62,8 @@ pub fn run() {
             storage::storage_database_location,
             storage::storage_read_database,
             storage::storage_write_database,
+            asset::asset_write,
+            asset::asset_delete,
             process::process_spawn,
             process::process_write,
             process::process_kill,
