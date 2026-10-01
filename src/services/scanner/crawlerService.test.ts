@@ -29,6 +29,8 @@ function page(url: string, overrides: Partial<NormalizedPage> = {}): NormalizedP
     externalLinks: [],
     images: [],
     metrics: { loadTimeMs: 5, domContentLoadedTimeMs: 3, domNodeCount: 10 },
+    authStatus: 'public',
+    loginSignals: { redirectedToLogin: false, hasPasswordField: false, hasCaptcha: false },
     status: 'completed',
     errorCode: null,
     errorMessage: null,

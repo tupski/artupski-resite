@@ -143,3 +143,26 @@ Every crawled URL is assigned one of 5 auth status classifications:
   - Playwright browser context storage state files deleted from filesystem.
 - **Auto-Expiry Purge**: Session records past cookie `expires` timestamp are automatically purged before crawl execution.
 - **Temporary Worker Context Isolation**: Each Playwright crawl worker runs in an ephemeral in-memory context; browser profile folders are deleted on worker exit.
+
+---
+
+## 5. Implementation Notes (as built)
+
+Delivery order note: this phase was implemented **after** Technology Detection, which was committed first as `2191b29`. The phase numbers are unchanged (Technology Detection remains Phase 6 by heading; Authentication remains Phase 5); only the order differs. See `docs/product/PLAN.md` for the full reconciliation.
+
+### 5.1 Delivered
+
+- **Crypto**: `src/services/auth/crypto.ts` - AES-256-GCM, IV fresh per encryption, 16-byte tag verified on decrypt (tamper/wrong-seed fail closed with `STORAGE_READ_FAILED`). Key derived by PBKDF2 (100,000 iterations, SHA-512). A `redactSecrets` helper exists as a defensive last line so cookie/token/authorization fields cannot reach a log.
+- **Persistence**: migrations `004_auth_sessions` (v4) and `005_scan_page_auth` (v5); `AuthSessionRepository` owns all `auth_sessions` SQL. One active session per project is enforced by a partial UNIQUE index.
+- **Injection**: the worker `launch` command accepts an optional `authState`; every session gets its own explicit Playwright context with `storageState` applied **in memory only**. No plaintext session file is ever written.
+- **Detection/classification**: `src/services/scanner/authClassifier.ts` assigns each page `public | authenticated | auth_required | blocked | unknown`. A wall is always `auth_required` (even with a session injected) because it proves the session did not hold. `blocked` covers CAPTCHA/WAF/429; `unknown` covers fetch failure/timeout.
+- **Lifecycle**: `close`/shutdown close the isolated context first (dropping injected cookies/storage) then the browser. Session purge runs before a crawl loads a session; "Clear Session" performs a cryptographic deletion.
+- **Events**: `auth.completed`, `auth.session_cleared`, `auth.session_expired`, `auth.scan_started` - none carries a secret.
+
+### 5.2 Supported authentication methods
+
+Only the **interactive captured-session** model is supported: a Playwright `storageState` (cookies + localStorage/sessionStorage) captured from a user-completed login, encrypted at rest, and replayed for that project + target domain. No password storage, no bearer/basic credential entry, no programmatic login.
+
+### 5.3 Documented limitation: interactive capture window deferred
+
+Section 2.1's headed interactive browser window (where the user completes login/MFA/SSO and then clicks "Capture Session") is **not delivered** in this build. Phase 3's worker only ever launches headless, and the specification forbids replacing that flow with credential automation. Everything downstream of capture is implemented (`captureSession` accepts a `CapturedStorageState`; encryption, storage, injection, classification, cleanup, and the UI session panel are complete and tested). Consequently the UI can use or clear an **existing** session but cannot yet create a new one; it states this plainly. The `detectLogin` worker command is a pure presence probe to support a future capture flow - it is not a credential-entry surface.

@@ -18,6 +18,7 @@ function input(scanId: string, overrides: Partial<UpsertScanPageInput> = {}): Up
     canonicalUrl: null,
     robotsMeta: null,
     status: 'completed',
+    authStatus: null,
     errorCode: null,
     errorMessage: null,
     loadTimeMs: 10,
@@ -35,10 +36,11 @@ function input(scanId: string, overrides: Partial<UpsertScanPageInput> = {}): Up
 
 describe('migration 002 (scan_pages)', () => {
   it('is registered, applied, and checksum-stable', async () => {
-    expect(MIGRATIONS.map((m) => m.version)).toEqual([1, 2, 3]);
+    // Versions 1-5 are registered; migration 002 (scan_pages) is applied second.
+    expect(MIGRATIONS.slice(0, 2).map((m) => m.version)).toEqual([1, 2]);
     const storage = await createTestStorage();
     const applied = readAppliedMigrations(storage.db);
-    expect(applied.map((m) => m.version)).toEqual([1, 2, 3]);
+    expect(applied.map((m) => m.version)).toEqual(MIGRATIONS.map((m) => m.version));
     expect(applied[1]?.name).toBe('scan_pages');
     expect(applied[1]?.checksum).toBe(computeChecksum(MIGRATIONS[1]!.sql));
     await storage.close();
@@ -150,7 +152,9 @@ describe('ScanPageRepository', () => {
     expect(pages.find((p) => p.url === 'https://example.com/b')?.status).toBe('failed');
 
     // The migration ledger is intact and migrations did not re-run.
-    expect(readAppliedMigrations(reopened.db).map((m) => m.version)).toEqual([1, 2, 3]);
+    expect(readAppliedMigrations(reopened.db).map((m) => m.version)).toEqual(
+      MIGRATIONS.map((m) => m.version)
+    );
 
     await storage.close();
     await reopened.close();

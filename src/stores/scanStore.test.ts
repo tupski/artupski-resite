@@ -31,6 +31,8 @@ function page(url: string, internalLinks: string[] = []): NormalizedPage {
     externalLinks: [],
     images: [],
     metrics: { loadTimeMs: 1, domContentLoadedTimeMs: 1, domNodeCount: 5 },
+    authStatus: 'public',
+    loginSignals: { redirectedToLogin: false, hasPasswordField: false, hasCaptcha: false },
     status: 'completed',
     errorCode: null,
     errorMessage: null,

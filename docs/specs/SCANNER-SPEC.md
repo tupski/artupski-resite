@@ -531,7 +531,17 @@ Every navigation boundary the architecture can observe is validated by `src/serv
 ### 7.5 Deviations from this specification
 - Sections 1, 5, and 6 describe the eventual DOM/CSS/JS/network/asset/screenshot pipeline and anti-bot evasion; Phase 4 implements only the crawl + metadata extraction subset above.
 - Multi-viewport capture (section 4.2 `viewportProfiles`) is **not** honored; the UI exposes the viewport controls as disabled/deferred.
-- Authentication (`authStorageStatePath`) and screenshots/HAR are later phases.
+- Screenshots and HAR are later phases.
+
+### 7.7 Authentication & session scanning (as built)
+
+Authenticated crawling reuses the same BFS frontier, limits, timeouts, URL policy, and redirect revalidation as an unauthenticated crawl. The only additions:
+
+- **Injection**: `CrawlerService` receives the session via `scanService`, which loads/decrypts it and passes it to `BrowserRuntime.launchSession({ authState })`; the worker applies it to an isolated context. The crawler itself never sees the cookies.
+- **Classification**: every page is assigned `authStatus` (`public` / `authenticated` / `auth_required` / `blocked` / `unknown`) by `src/services/scanner/authClassifier.ts` and persisted on `scan_pages.auth_status`. A wall is always `auth_required`, even with a session injected (a wall proves the session did not hold).
+- **Gating**: a page classified `auth_required`/`blocked` is not treated as a completed page - its links are not enqueued - and when the caller set `requireAuthentication`, the scan is recorded `failed` (with `pagesAuthRequired`/`pagesBlocked` reported), never `completed`.
+- **Unchanged**: an unauthenticated scan behaves exactly as before (`authStatus` is `public` or `auth_required`; terminal status is unaffected).
+- **Deferred**: `authStorageStatePath` (a file path) is intentionally not used - the session is stored encrypted in SQLite, not as a file.
 
 ### 7.6 Phase 5 extension - technology-detection evidence
 Technology detection (`docs/specs/TECHNOLOGY-DETECTION.md`) runs over evidence the crawler already collects. Because Phase 4 persisted page metadata/structure only, the extraction contract was extended with a bounded `PageTechEvidence` record carried on each normalized page:

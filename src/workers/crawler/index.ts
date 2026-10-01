@@ -33,11 +33,15 @@ import {
   createCrawlScope,
   normalizeExtraction,
   extractPageEvidence,
+  createEmptyLoginSignals,
+  type AuthStorageState,
   type BrowserAvailability,
   type CloseResultPayload,
+  type DetectLoginResultPayload,
   type ExtractResultPayload,
   type HostResolution,
   type LaunchResultPayload,
+  type LoginDetectionSignals,
   type NavigateResultPayload,
   type NormalizedPage,
   type PageExtraction,
@@ -45,6 +49,7 @@ import {
   type WorkerCommandMessage,
   type WorkerResultPayload
 } from './protocol.ts';
+import { LOGIN_PROBE_EXPRESSION } from '../../services/scanner/extraction/inPageExtractor.ts';
 import { classifyIpLiteral } from '../../services/scanner/security/ipPolicy.ts';
 
 /** Worker build identifier reported during the ping handshake. */
@@ -69,7 +74,10 @@ interface PlaywrightResponse {
 }
 
 interface PlaywrightPage {
-  goto(url: string, options: { timeout: number; waitUntil: 'load' | 'domcontentloaded' | 'networkidle' }): Promise<PlaywrightResponse | null>;
+  goto(
+    url: string,
+    options: { timeout: number; waitUntil: 'load' | 'domcontentloaded' | 'networkidle' }
+  ): Promise<PlaywrightResponse | null>;
   title(): Promise<string>;
   url(): string;
   evaluate<T>(expression: string): Promise<T>;
@@ -77,9 +85,15 @@ interface PlaywrightPage {
   close(): Promise<void>;
 }
 
+interface PlaywrightContext {
+  newPage(): Promise<PlaywrightPage>;
+  close(): Promise<void>;
+}
+
 interface PlaywrightBrowser {
   version(): string;
   newPage(): Promise<PlaywrightPage>;
+  newContext(options?: { storageState?: unknown }): Promise<PlaywrightContext>;
   close(): Promise<void>;
 }
 
@@ -90,6 +104,13 @@ interface PlaywrightChromium {
 
 interface ActiveSession {
   browser: PlaywrightBrowser;
+  /**
+   * Explicit, isolated browser context for this session. When the host injects
+   * a captured storage state it is applied here, so a plain `launch()` can never
+   * inherit it and one session cannot see another's cookies. Always closed with
+   * the session (no persistent profile is written to disk).
+   */
+  context: PlaywrightContext;
   engine: 'chromium';
   version: string;
   /** Abort controller for the in-flight extraction, if any. */
@@ -134,8 +155,11 @@ async function detectBrowser(): Promise<BrowserAvailability> {
   }
   try {
     const executablePath = chromium.executablePath();
-    const installed = typeof executablePath === 'string' && executablePath.length > 0 && existsSync(executablePath);
-    return installed ? { engine: 'chromium', installed: true, executablePath } : { engine: 'chromium', installed: false };
+    const installed =
+      typeof executablePath === 'string' && executablePath.length > 0 && existsSync(executablePath);
+    return installed
+      ? { engine: 'chromium', installed: true, executablePath }
+      : { engine: 'chromium', installed: false };
   } catch {
     return { engine: 'chromium', installed: false };
   }
@@ -164,7 +188,12 @@ async function resolveHost(hostname: string): Promise<HostResolution> {
 
 async function handlePing(): Promise<WorkerResultPayload> {
   const browser = await detectBrowser();
-  const payload: PingResultPayload = { command: 'ping', pong: true, workerVersion: WORKER_VERSION, browser };
+  const payload: PingResultPayload = {
+    command: 'ping',
+    pong: true,
+    workerVersion: WORKER_VERSION,
+    browser
+  };
   return payload;
 }
 
@@ -181,7 +210,9 @@ async function handleLaunch(message: WorkerCommandMessage): Promise<WorkerResult
 
   const detection = await detectBrowser();
   if (!detection.installed && !message.payload.executablePath) {
-    throw Object.assign(new Error('No Playwright Chromium build was found.'), { code: 'BROWSER_NOT_INSTALLED' });
+    throw Object.assign(new Error('No Playwright Chromium build was found.'), {
+      code: 'BROWSER_NOT_INSTALLED'
+    });
   }
 
   const browser = await chromium.launch({
@@ -190,11 +221,62 @@ async function handleLaunch(message: WorkerCommandMessage): Promise<WorkerResult
   });
   const sessionId = createMessageId();
   const version = browser.version();
-  sessions.set(sessionId, { browser, engine: 'chromium', version, activeAbort: null });
-  emitEvent('browser.launched', { sessionId, version });
 
-  const payload: LaunchResultPayload = { command: 'launch', sessionId, engine: 'chromium', version };
+  // Every session gets its OWN explicit context. A captured session is applied
+  // here (in-memory only) so it can never leak from the default context of a
+  // plain launch, and a state-less launch can never inherit it. The injected
+  // state is never written to disk, logged, or echoed back.
+  const contextOptions: { storageState?: unknown } = {};
+  if (message.payload.authState) {
+    contextOptions.storageState = toPlaywrightStorageState(message.payload.authState);
+  }
+  const context = await browser.newContext(contextOptions);
+
+  sessions.set(sessionId, { browser, context, engine: 'chromium', version, activeAbort: null });
+  emitEvent('browser.launched', {
+    sessionId,
+    version,
+    authenticated: message.payload.authState !== undefined
+  });
+
+  const payload: LaunchResultPayload = {
+    command: 'launch',
+    sessionId,
+    engine: 'chromium',
+    version
+  };
   return payload;
+}
+
+/**
+ * Convert the captured storage state into Playwright's `storageState` shape.
+ * Cookie `expires: -1` (a session cookie) is mapped to `-1` as Playwright
+ * expects; everything else is passed through unchanged. The value never leaves
+ * this process and is never logged.
+ */
+function toPlaywrightStorageState(state: AuthStorageState): {
+  cookies: Array<Record<string, unknown>>;
+  origins: Array<{ origin: string; localStorage: Array<{ name: string; value: string }> }>;
+} {
+  return {
+    cookies: state.cookies.map((cookie) => ({
+      name: cookie.name,
+      value: cookie.value,
+      domain: cookie.domain,
+      path: cookie.path,
+      expires: cookie.expires,
+      httpOnly: cookie.httpOnly,
+      secure: cookie.secure,
+      sameSite: cookie.sameSite
+    })),
+    origins: state.origins.map((origin) => ({
+      origin: origin.origin,
+      localStorage: Object.entries(origin.localStorage ?? {}).map(([name, value]) => ({
+        name,
+        value
+      }))
+    }))
+  };
 }
 
 async function handleNavigate(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
@@ -208,7 +290,7 @@ async function handleNavigate(message: WorkerCommandMessage): Promise<WorkerResu
     });
   }
 
-  const page = await session.browser.newPage();
+  const page = await session.context.newPage();
   const response = await page.goto(message.payload.url, {
     timeout: clampTimeout(message.payload.timeoutMs),
     waitUntil: 'load'
@@ -240,7 +322,10 @@ function contentTypeAllowed(contentType: string | undefined, allowed: readonly s
  * addresses (defense in depth against a page pulling in SSRF targets). The
  * trusted seed host is always allowed, since the user explicitly chose it.
  */
-async function installRouteGuard(page: PlaywrightPage, trustedHosts: ReadonlySet<string>): Promise<void> {
+async function installRouteGuard(
+  page: PlaywrightPage,
+  trustedHosts: ReadonlySet<string>
+): Promise<void> {
   await page.route('**/*', async (route) => {
     try {
       const parsed = new URL(route.request().url());
@@ -272,12 +357,18 @@ async function handleExtract(message: WorkerCommandMessage): Promise<WorkerResul
   }
 
   const requestedUrl = message.payload.url;
-  const allowedContentTypes = message.payload.allowedContentTypes ?? DEFAULT_EXTRACTABLE_CONTENT_TYPES;
+  const allowedContentTypes =
+    message.payload.allowedContentTypes ?? DEFAULT_EXTRACTABLE_CONTENT_TYPES;
   const followRedirects = message.payload.followRedirects ?? true;
-  const maxRedirects = Math.min(message.payload.maxRedirects ?? MAX_EXTRACT_REDIRECTS, MAX_EXTRACT_REDIRECTS);
+  const maxRedirects = Math.min(
+    message.payload.maxRedirects ?? MAX_EXTRACT_REDIRECTS,
+    MAX_EXTRACT_REDIRECTS
+  );
   const scope = createCrawlScope(requestedUrl);
   if (!scope) {
-    throw Object.assign(new Error('The requested URL could not be parsed.'), { code: 'INVALID_URL' });
+    throw Object.assign(new Error('The requested URL could not be parsed.'), {
+      code: 'INVALID_URL'
+    });
   }
   // The user explicitly chose this URL as the crawl target, so its origin is
   // trusted for the private/loopback checks (a local dev server is legitimate).
@@ -296,7 +387,7 @@ async function handleExtract(message: WorkerCommandMessage): Promise<WorkerResul
 
   const abort = new AbortController();
   session.activeAbort = abort;
-  const page = await session.browser.newPage();
+  const page = await session.context.newPage();
   const trustedHosts = new Set<string>([new URL(requestedUrl).hostname.toLowerCase()]);
 
   try {
@@ -317,7 +408,9 @@ async function handleExtract(message: WorkerCommandMessage): Promise<WorkerResul
         throw Object.assign(new Error('Navigation timed out.'), { code: 'CONNECTION_TIMED_OUT' });
       }
       if (/net::ERR_NAME_NOT_RESOLVED|ENOTFOUND/i.test(messageText)) {
-        throw Object.assign(new Error('The host could not be resolved.'), { code: 'DNS_RESOLUTION_FAILED' });
+        throw Object.assign(new Error('The host could not be resolved.'), {
+          code: 'DNS_RESOLUTION_FAILED'
+        });
       }
       throw Object.assign(new Error('Navigation failed.'), { code: 'NAVIGATION_ABORTED' });
     }
@@ -341,7 +434,9 @@ async function handleExtract(message: WorkerCommandMessage): Promise<WorkerResul
 
     // Redirect accounting: refuse an over-long chain rather than extracting.
     if (followRedirects === false && finalUrl !== requestedUrl) {
-      throw Object.assign(new Error('Redirects are disabled for this extraction.'), { code: 'NAVIGATION_ABORTED' });
+      throw Object.assign(new Error('Redirects are disabled for this extraction.'), {
+        code: 'NAVIGATION_ABORTED'
+      });
     }
     void maxRedirects;
 
@@ -359,13 +454,19 @@ async function handleExtract(message: WorkerCommandMessage): Promise<WorkerResul
         externalLinks: [],
         images: [],
         metrics: { loadTimeMs: 0, domContentLoadedTimeMs: 0, domNodeCount: 0 },
+        authStatus: 'unknown',
+        loginSignals: createEmptyLoginSignals(),
         status: 'skipped',
         errorCode: 'UNSUPPORTED_CONTENT_TYPE',
         errorMessage: `Content type "${contentType ?? 'unknown'}" is not extractable.`,
         warnings: [],
         capturedAt: new Date().toISOString()
       };
-      const payload: ExtractResultPayload = { command: 'extract', sessionId: message.payload.sessionId, page };
+      const payload: ExtractResultPayload = {
+        command: 'extract',
+        sessionId: message.payload.sessionId,
+        page
+      };
       return payload;
     }
 
@@ -385,7 +486,11 @@ async function handleExtract(message: WorkerCommandMessage): Promise<WorkerResul
       setCookieHeaders
     });
     const normalized = normalizeExtraction(evidence, { scope });
-    const payload: ExtractResultPayload = { command: 'extract', sessionId: message.payload.sessionId, page: normalized };
+    const payload: ExtractResultPayload = {
+      command: 'extract',
+      sessionId: message.payload.sessionId,
+      page: normalized
+    };
     return payload;
   } finally {
     session.activeAbort = null;
@@ -413,11 +518,91 @@ async function handleClose(message: WorkerCommandMessage): Promise<WorkerResultP
   if (session) {
     sessions.delete(message.payload.sessionId);
     session.activeAbort?.abort();
+    // Close the isolated context first (drops all injected cookies/storage),
+    // then the browser. No profile directory is written to disk.
+    await session.context.close().catch(() => undefined);
     await session.browser.close();
     emitEvent('browser.closed', { sessionId: message.payload.sessionId });
   }
   const payload: CloseResultPayload = { command: 'close', sessionId: message.payload.sessionId };
   return payload;
+}
+
+/**
+ * Inspect a URL for login-wall indicators without extracting page data. Used to
+ * verify the injected session still authenticates before a scan relies on it.
+ * The same URL policy is applied as a normal navigation; only presence signals
+ * are returned (never page content or secrets).
+ */
+async function handleDetectLogin(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
+  if (message.payload.command !== 'detectLogin') {
+    throw new Error('detectLogin handler received the wrong command');
+  }
+  const session = sessions.get(message.payload.sessionId);
+  if (!session) {
+    throw Object.assign(new Error(`Unknown session "${message.payload.sessionId}".`), {
+      code: 'PLAYWRIGHT_CRASHED'
+    });
+  }
+
+  const requestedUrl = message.payload.url;
+  const trustedOrigins = [new URL(requestedUrl).origin];
+  const decision = await evaluateUrlPolicy(requestedUrl, { resolveHost, trustedOrigins });
+  if (!decision.allowed) {
+    throw Object.assign(new Error(`Navigation blocked by the URL policy (${decision.reason}).`), {
+      code: 'INVALID_URL',
+      detail: decision.detail
+    });
+  }
+
+  const page = await session.context.newPage();
+  try {
+    let response: PlaywrightResponse | null = null;
+    let status: number | null = null;
+    let finalUrl = requestedUrl;
+    let navigationFailed = false;
+    try {
+      response = await page.goto(requestedUrl, {
+        timeout: clampTimeout(message.payload.timeoutMs),
+        waitUntil: 'load'
+      });
+      finalUrl = page.url();
+      status = response?.status() ?? null;
+    } catch {
+      navigationFailed = true;
+    }
+
+    // A non-2xx status is itself a login/denied signal when no DOM is available.
+    let domSignals = { hasPasswordField: false, hasCaptcha: false };
+    if (!navigationFailed) {
+      try {
+        domSignals = await page.evaluate<{ hasPasswordField: boolean; hasCaptcha: boolean }>(
+          LOGIN_PROBE_EXPRESSION
+        );
+      } catch {
+        domSignals = { hasPasswordField: false, hasCaptcha: false };
+      }
+    }
+
+    const signals: LoginDetectionSignals = {
+      redirectedToLogin: finalUrl !== requestedUrl,
+      hasPasswordField: domSignals.hasPasswordField === true,
+      hasCaptcha: domSignals.hasCaptcha === true,
+      httpStatus: status
+    };
+
+    const payload: DetectLoginResultPayload = {
+      command: 'detectLogin',
+      sessionId: message.payload.sessionId,
+      url: requestedUrl,
+      finalUrl,
+      status,
+      signals
+    };
+    return payload;
+  } finally {
+    await page.close().catch(() => undefined);
+  }
 }
 
 async function dispatch(message: WorkerCommandMessage): Promise<void> {
@@ -442,32 +627,36 @@ async function dispatch(message: WorkerCommandMessage): Promise<void> {
       case 'close':
         payload = await handleClose(message);
         break;
+      case 'detectLogin':
+        payload = await handleDetectLogin(message);
+        break;
       default:
-        throw Object.assign(new Error('Unsupported command.'), { code: 'WORKER_PROTOCOL_VIOLATION' });
+        throw Object.assign(new Error('Unsupported command.'), {
+          code: 'WORKER_PROTOCOL_VIOLATION'
+        });
     }
     write(createResultMessage(message.id, payload));
   } catch (error) {
     const code =
-      typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      typeof error.code === 'string'
         ? error.code
         : 'PLAYWRIGHT_CRASHED';
     const text = error instanceof Error ? error.message : 'Worker command failed.';
     log('error', `${message.payload.command} failed: ${text}`);
     write(
-      createResultMessage(
-        message.id,
-        { command: message.payload.command } as WorkerResultPayload,
-        {
-          code: code as never,
-          category: 'browser',
-          message: text,
-          severity: 'error',
-          recoverable: true,
-          retryable: false,
-          suggestedAction: 'Retry the browser operation.',
-          timestamp: new Date().toISOString()
-        }
-      )
+      createResultMessage(message.id, { command: message.payload.command } as WorkerResultPayload, {
+        code: code as never,
+        category: 'browser',
+        message: text,
+        severity: 'error',
+        recoverable: true,
+        retryable: false,
+        suggestedAction: 'Retry the browser operation.',
+        timestamp: new Date().toISOString()
+      })
     );
   }
 }
@@ -499,7 +688,12 @@ function onChunk(chunk: string): void {
     }
     if (parsed.message.type !== 'command') {
       // The worker only accepts commands; anything else is a protocol misuse.
-      write(createErrorMessage({ code: 'WORKER_PROTOCOL_VIOLATION', message: `Worker cannot handle "${parsed.message.type}" frames.` }));
+      write(
+        createErrorMessage({
+          code: 'WORKER_PROTOCOL_VIOLATION',
+          message: `Worker cannot handle "${parsed.message.type}" frames.`
+        })
+      );
       continue;
     }
     void dispatch(parsed.message);
@@ -514,6 +708,11 @@ async function shutdown(code: number): Promise<void> {
   for (const [sessionId, session] of sessions) {
     sessions.delete(sessionId);
     session.activeAbort?.abort();
+    try {
+      await session.context.close();
+    } catch {
+      // Best-effort cleanup on shutdown.
+    }
     try {
       await session.browser.close();
     } catch {

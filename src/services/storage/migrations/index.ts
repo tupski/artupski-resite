@@ -21,6 +21,8 @@ import type { SchemaMigrationRow } from '../types';
 import { MIGRATION_001_INIT } from './001_init';
 import { MIGRATION_002_SCAN_PAGES } from './002_scan_pages';
 import { MIGRATION_003_TECHNOLOGY_DETECTION } from './003_technology_detection';
+import { MIGRATION_004_AUTH_SESSIONS } from './004_auth_sessions';
+import { MIGRATION_005_SCAN_PAGE_AUTH } from './005_scan_page_auth';
 import type { AppliedMigration, Migration, MigrationResult } from './types';
 
 export type { AppliedMigration, Migration, MigrationResult } from './types';
@@ -32,7 +34,9 @@ export type { AppliedMigration, Migration, MigrationResult } from './types';
 export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_001_INIT,
   MIGRATION_002_SCAN_PAGES,
-  MIGRATION_003_TECHNOLOGY_DETECTION
+  MIGRATION_003_TECHNOLOGY_DETECTION,
+  MIGRATION_004_AUTH_SESSIONS,
+  MIGRATION_005_SCAN_PAGE_AUTH
 ];
 
 const CREATE_TRACKING_TABLE = `
@@ -130,10 +134,11 @@ export async function runMigrations(
     try {
       db.transaction(() => {
         db.exec(migration.sql);
-        db.run(
-          'INSERT INTO schema_migrations (version, name, checksum) VALUES (?, ?, ?);',
-          [migration.version, migration.name, checksum]
-        );
+        db.run('INSERT INTO schema_migrations (version, name, checksum) VALUES (?, ?, ?);', [
+          migration.version,
+          migration.name,
+          checksum
+        ]);
       });
     } catch (error) {
       throw createStorageError('MIGRATION_FAILED', {

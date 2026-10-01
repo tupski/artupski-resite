@@ -52,6 +52,16 @@ Session payloads saved in SQLite (`scan_sessions.encrypted_storage_state`) MUST 
 - Session records expire automatically 24 hours post-capture.
 - Session purge task deletes encrypted database records and wipes cached memory buffers upon scan completion or error.
 
+### 3.3 Session Security Implementation Note (as built)
+
+- **Table**: the implemented table is `auth_sessions` (not the section-3 sketch name `scan_sessions`); the envelope is split into `ciphertext` / `iv` / `auth_tag` columns plus the per-project `salt`.
+- **Cipher/KDF (documented reconciliation)**: `AUTH-SCANNING.md` section 4.1 names Argon2id; this document names PBKDF2. The two sections disagree and PBKDF2-HMAC-SHA512 (100,000 iterations, Web Crypto) is implemented, so no new native/WASM dependency is added. **Limitation**: the "system-unique seed" is a random per-install value persisted in `app_settings`, **not** an OS-keychain master secret (keychain integration is not present in this codebase). It is an installation identifier, not hardware-backed, and is documented as such. A wrong seed or salt fails decryption closed.
+- **Injection isolation**: a captured session is applied only to a dedicated Playwright context created for that session (`browser.newContext({ storageState })`), in memory. It is never written to disk, and a plain `launch` (no state) cannot inherit it. On `close`/shutdown the context is closed before the browser, dropping all injected cookies/storage.
+- **No leakage**: cookie/token values are never placed on a `NormalizedPage`, technology evidence, a scan report, an event payload, a log line, or a worker result. `detectLogin` returns only boolean presence signals. `src/services/auth/crypto.ts` exports a `redactSecrets` helper as a defensive last line.
+- **Classification honesty**: a page that shows an auth wall is classified `auth_required` (never `authenticated`), and when a scan required authentication such a page makes the scan `failed` rather than `completed`.
+- **Regression preserved**: the existing URL policy, redirect revalidation, sub-resource IP guard, and SSRF protections are applied to authenticated navigations exactly as to unauthenticated ones.
+- **Not claimed**: this phase does not defend against a compromised host, memory scraping of an active session, or a malicious target designed to defeat classification. It also cannot create a session yet (the interactive capture window is deferred; see `AUTH-SCANNING.md` section 5.3).
+
 ---
 
 ## 4. Prompt Injection Defense & Data/Prompt Separation

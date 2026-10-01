@@ -9,7 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Phase 5 - technology detection
+### Phase 5 - authentication & session scanning
+
+Authentication and session scanning on top of the Phase 3 browser foundation and Phase 4 crawler. **No new process manager, browser runtime, or crawler was created**; the worker protocol was extended additively and `WORKER_PROTOCOL_VERSION` stays `1`. A captured session is encrypted at rest, injected into an isolated browser context, and never logged or transmitted.
+
+- **Crypto/persistence**: `src/services/auth/crypto.ts` implements AES-256-GCM with a PBKDF2 (100k, SHA-512) derived key. Forward-only migration `004_auth_sessions.ts` (version 4) adds `auth_sessions` with a partial UNIQUE index enforcing **one active session per project**; migration `005_scan_page_auth.ts` (version 5) adds `scan_pages.auth_status`. `001`–`003` are untouched. `AuthSessionRepository` (the only SQL for the table) performs the save/deactivate/purge/delete lifecycle.
+- **Spec reconciliation (documented)**: `AUTH-SCANNING.md` section 4.1 names Argon2id while `SECURITY.md` section 3.1 names PBKDF2; PBKDF2 is implemented (Web Crypto, no new dependency). The interactive headed capture window in `AUTH-SCANNING.md` section 2.1 is **deferred** (Phase 3's worker is headless-only and credential automation is out of scope); see `docs/product/PLAN.md` Phase 5 implementation notes.
+- **Worker**: `launch` now accepts an optional `authState` and the worker creates an explicit isolated Playwright context for every session (`storageState` applied in-memory only). New `detectLogin` command (pure presence probe; no page data) and auth-wall DOM signals (`hasPasswordField`, `hasCaptcha`; redirect signal derived worker-side) extend extraction without capturing any secret.
+- **Crawler**: `src/services/scanner/authClassifier.ts` assigns each page `public` / `authenticated` / `auth_required` / `blocked` / `unknown`. An auth-walled page is never a completed/authenticated result: its links are not enqueued and, when authentication was required, the scan is recorded `failed`, not `completed`.
+- **UI**: `ScanRoute` gains an Authentication panel (mode selection, honest session badge, capture/expiry metadata, safe clear) backed by `src/stores/authStore.ts`. No secrets are rendered; a session can only be selected when the persisted metadata proves one exists.
+- **Events/Errors**: `auth.completed`, `auth.session_cleared`, `auth.session_expired`, and `auth.scan_started` added to the taxonomy (no secret material in any payload).
+- **Tests**: crypto round-trip/tamper/redaction, page-classifier taxonomy, `auth_sessions` migration + repository + cascade/reopen, `authSessionService` capture/load/clear/purge + no-plaintext-persistence, worker-protocol `authState`/`detectLogin` validation, browser auth injection + `detectLogin`, authenticated crawler integration, and the honest UI panel.
+
+### Phase 6 - technology detection (delivered before Phase 5; numbering unchanged)
 
 Rule-based technology detection running over the evidence the Phase 4 crawler already collects. **No new network access** is introduced: detection consumes bounded, persisted page evidence only. No authentication, responsive capture, AI, or blueprint/clone/project generation.
 

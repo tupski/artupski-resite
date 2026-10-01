@@ -20,6 +20,7 @@ export interface ExtractablePage {
 
 interface RawExtraction {
   title?: unknown;
+  loginSignals?: unknown;
   metaDescription?: unknown;
   canonicalUrl?: unknown;
   robotsMeta?: unknown;
@@ -116,7 +117,11 @@ function coerceStringArray(value: unknown, max: number, maxLength: number): stri
   return result;
 }
 
-function coerceStringRecord(value: unknown, max: number, maxValueLength: number): Record<string, string> {
+function coerceStringRecord(
+  value: unknown,
+  max: number,
+  maxValueLength: number
+): Record<string, string> {
   const result: Record<string, string> = {};
   if (!value || typeof value !== 'object') {
     return result;
@@ -156,7 +161,9 @@ function cookieNameFromSetCookie(header: string): string | null {
 
 function coerceTech(raw: unknown, context: ExtractionContext): PageTechEvidence {
   const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  const cookieNames = new Set<string>(coerceStringArray(record.cookieNames, EXTRACTION_LIMITS.maxCookieNames, 128));
+  const cookieNames = new Set<string>(
+    coerceStringArray(record.cookieNames, EXTRACTION_LIMITS.maxCookieNames, 128)
+  );
   for (const header of context.setCookieHeaders ?? []) {
     const name = cookieNameFromSetCookie(header);
     if (name && cookieNames.size < EXTRACTION_LIMITS.maxCookieNames) {
@@ -170,14 +177,23 @@ function coerceTech(raw: unknown, context: ExtractionContext): PageTechEvidence 
       EXTRACTION_LIMITS.maxHeaderValueLength
     ),
     cookieNames: [...cookieNames],
-    scriptSrcs: coerceStringArray(record.scriptSrcs, EXTRACTION_LIMITS.maxScriptSrcs, EXTRACTION_LIMITS.maxUrlLength),
-    metaTags: coerceStringRecord(record.metaTags, EXTRACTION_LIMITS.maxMetaTags, EXTRACTION_LIMITS.maxMetaValueLength),
+    scriptSrcs: coerceStringArray(
+      record.scriptSrcs,
+      EXTRACTION_LIMITS.maxScriptSrcs,
+      EXTRACTION_LIMITS.maxUrlLength
+    ),
+    metaTags: coerceStringRecord(
+      record.metaTags,
+      EXTRACTION_LIMITS.maxMetaTags,
+      EXTRACTION_LIMITS.maxMetaValueLength
+    ),
     domMarkers: coerceStringArray(record.domMarkers, EXTRACTION_LIMITS.maxDomMarkers, 128),
     jsGlobals: coerceBooleanRecord(record.jsGlobals),
-    htmlSnippet: trimToString(
-      typeof record.htmlSnippet === 'string' ? record.htmlSnippet : null,
-      EXTRACTION_LIMITS.maxHtmlSnippetLength
-    ) ?? ''
+    htmlSnippet:
+      trimToString(
+        typeof record.htmlSnippet === 'string' ? record.htmlSnippet : null,
+        EXTRACTION_LIMITS.maxHtmlSnippetLength
+      ) ?? ''
   };
 }
 
@@ -192,13 +208,26 @@ export async function extractPageEvidence(
 ): Promise<PageExtraction> {
   const raw = await page.evaluate<RawExtraction>(PAGE_EXTRACTOR_EXPRESSION);
 
-  const metricsRaw = raw && typeof raw.metrics === 'object' && raw.metrics !== null ? (raw.metrics as Record<string, unknown>) : {};
+  const metricsRaw =
+    raw && typeof raw.metrics === 'object' && raw.metrics !== null
+      ? (raw.metrics as Record<string, unknown>)
+      : {};
 
   return {
     requestedUrl: context.requestedUrl,
     finalUrl: context.finalUrl,
     httpStatus: context.httpStatus,
     title: asString(raw?.title),
+    loginSignals: (() => {
+      const signals =
+        raw?.loginSignals && typeof raw.loginSignals === 'object'
+          ? (raw.loginSignals as Record<string, unknown>)
+          : {};
+      return {
+        hasPasswordField: signals.hasPasswordField === true,
+        hasCaptcha: signals.hasCaptcha === true
+      };
+    })(),
     metaDescription: asStringOrNull(raw?.metaDescription),
     canonicalUrl: asStringOrNull(raw?.canonicalUrl),
     robotsMeta: asStringOrNull(raw?.robotsMeta),

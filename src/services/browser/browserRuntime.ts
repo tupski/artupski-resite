@@ -24,9 +24,11 @@ import { logger } from '../infra/logger';
 import type { ProcessManager } from '../infra/processManager';
 import { createProcessError } from '../infra/processErrors';
 import {
+  type AuthStorageState,
   type BrowserAvailability,
   type BrowserEngine,
   type CloseResultPayload,
+  type DetectLoginResultPayload,
   type LaunchResultPayload,
   type NavigateResultPayload,
   type PingResultPayload,
@@ -165,7 +167,9 @@ export class BrowserRuntime {
 
   private async runInitialize(): Promise<BrowserDiagnostics> {
     this.state = 'initializing';
-    eventBus.emit(createEvent('browser.detection_started', { engine: 'chromium', installed: false }));
+    eventBus.emit(
+      createEvent('browser.detection_started', { engine: 'chromium', installed: false })
+    );
     this.log.info('Browser runtime detection started');
 
     try {
@@ -243,7 +247,17 @@ export class BrowserRuntime {
    * Launch a controlled Chromium session. Opt-in: callers must have run the
    * smoke setup (`npx playwright install chromium`). Returns a typed result.
    */
-  async launchSession(options: { headless?: boolean; executablePath?: string } = {}): Promise<BrowserResult<BrowserSession>> {
+  async launchSession(
+    options: {
+      headless?: boolean;
+      executablePath?: string;
+      /**
+       * Optional captured storage state to isolate into the session context.
+       * Callers pass it only for authenticated runs; it is never echoed back.
+       */
+      authState?: AuthStorageState;
+    } = {}
+  ): Promise<BrowserResult<BrowserSession>> {
     if (this.state !== 'ready') {
       return {
         ok: false,
@@ -260,7 +274,8 @@ export class BrowserRuntime {
         command: 'launch',
         engine: 'chromium',
         headless: options.headless ?? true,
-        executablePath: options.executablePath
+        executablePath: options.executablePath,
+        ...(options.authState ? { authState: options.authState } : {})
       });
       const payload = result as LaunchResultPayload;
       if (payload.command !== 'launch') {
@@ -279,7 +294,10 @@ export class BrowserRuntime {
           sessionId: payload.sessionId
         })
       );
-      this.log.info('Browser session started', { sessionId: payload.sessionId, version: payload.version });
+      this.log.info('Browser session started', {
+        sessionId: payload.sessionId,
+        version: payload.version
+      });
       return { ok: true, data: this.session };
     } catch (error) {
       const structured = toStructuredError(error, {
@@ -292,8 +310,48 @@ export class BrowserRuntime {
     }
   }
 
+  /**
+   * Inspect `url` for login-wall indicators using the session's injected state,
+   * without extracting page data. Used to verify a stored session still holds
+   * before relying on it for an authenticated crawl. Returns only non-secret
+   * signals.
+   */
+  async detectLogin(
+    sessionId: string,
+    url: string,
+    timeoutMs = MAX_BROWSER_TIMEOUT_MS
+  ): Promise<BrowserResult<DetectLoginResultPayload>> {
+    try {
+      const result = await this.adapter.request({
+        command: 'detectLogin',
+        sessionId,
+        url,
+        timeoutMs: Math.min(timeoutMs, MAX_BROWSER_TIMEOUT_MS)
+      });
+      const payload = result as DetectLoginResultPayload;
+      if (payload.command !== 'detectLogin') {
+        throw createProcessError('WORKER_PROTOCOL_VIOLATION', {
+          message: 'Browser worker returned an unexpected result for detectLogin.'
+        });
+      }
+      return { ok: true, data: payload };
+    } catch (error) {
+      const structured = toStructuredError(error, {
+        code: 'PLAYWRIGHT_CRASHED',
+        category: 'browser',
+        message: 'Failed to inspect the login state.'
+      });
+      this.lastError = structured;
+      return { ok: false, error: structured };
+    }
+  }
+
   /** Navigate the active session to `url` (timeout capped at 30s). */
-  async navigate(sessionId: string, url: string, timeoutMs = MAX_BROWSER_TIMEOUT_MS): Promise<BrowserResult<NavigateResultPayload>> {
+  async navigate(
+    sessionId: string,
+    url: string,
+    timeoutMs = MAX_BROWSER_TIMEOUT_MS
+  ): Promise<BrowserResult<NavigateResultPayload>> {
     try {
       const result = await this.adapter.request({
         command: 'navigate',

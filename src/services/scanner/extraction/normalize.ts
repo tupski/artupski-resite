@@ -13,8 +13,10 @@
  */
 import { classifyLink, type CrawlScope } from '../crawlScope.ts';
 import { resolveAndNormalize } from '../normalization.ts';
+import { looksLikeLoginPath } from '../../auth/types.ts';
 import { EXTRACTION_LIMITS, trimToNull, trimToString } from './limits.ts';
 import type {
+  LoginSignals,
   NormalizedPage,
   PageExtraction,
   PageHeading,
@@ -113,7 +115,11 @@ function normalizeTech(tech: PageTechEvidence | undefined, baseUrl: string): Pag
   const seenScripts = new Set<string>();
   for (const rawSrc of (tech?.scriptSrcs ?? []).slice(0, EXTRACTION_LIMITS.maxScriptSrcs)) {
     const resolved = resolveAndNormalize(baseUrl, rawSrc);
-    if (!resolved || resolved.length > EXTRACTION_LIMITS.maxUrlLength || seenScripts.has(resolved)) {
+    if (
+      !resolved ||
+      resolved.length > EXTRACTION_LIMITS.maxUrlLength ||
+      seenScripts.has(resolved)
+    ) {
       continue;
     }
     seenScripts.add(resolved);
@@ -150,7 +156,25 @@ function normalizeTech(tech: PageTechEvidence | undefined, baseUrl: string): Pag
 }
 
 /** Build a normalized page result from raw extraction evidence. */
-export function normalizeExtraction(raw: PageExtraction, context: NormalizeContext): NormalizedPage {
+/**
+ * Derive the auth-wall signals: the DOM probes come from the in-page extractor,
+ * and `redirectedToLogin` is computed here from the requested vs final URL (a
+ * cross-document or SPA redirect onto a known login path).
+ */
+function deriveLoginSignals(raw: PageExtraction): LoginSignals {
+  const redirectedToLogin =
+    looksLikeLoginPath(raw.finalUrl) && !looksLikeLoginPath(raw.requestedUrl);
+  return {
+    redirectedToLogin,
+    hasPasswordField: raw.loginSignals?.hasPasswordField === true,
+    hasCaptcha: raw.loginSignals?.hasCaptcha === true
+  };
+}
+
+export function normalizeExtraction(
+  raw: PageExtraction,
+  context: NormalizeContext
+): NormalizedPage {
   const baseUrl = raw.finalUrl || raw.requestedUrl;
   const links = normalizeLinks(raw.links, baseUrl, context.scope);
   const warnings = raw.warnings
@@ -164,9 +188,7 @@ export function normalizeExtraction(raw: PageExtraction, context: NormalizeConte
     httpStatus: raw.httpStatus,
     title: trimToString(raw.title, EXTRACTION_LIMITS.maxTextFieldLength),
     metaDescription: trimToNull(raw.metaDescription, EXTRACTION_LIMITS.maxTextFieldLength),
-    canonicalUrl: raw.canonicalUrl
-      ? resolveAndNormalize(baseUrl, raw.canonicalUrl)
-      : null,
+    canonicalUrl: raw.canonicalUrl ? resolveAndNormalize(baseUrl, raw.canonicalUrl) : null,
     robotsMeta: trimToNull(raw.robotsMeta, EXTRACTION_LIMITS.maxTextFieldLength),
     headings: normalizeHeadings(raw.headings),
     internalLinks: links.internal,
@@ -178,6 +200,10 @@ export function normalizeExtraction(raw: PageExtraction, context: NormalizeConte
       domNodeCount: Math.max(0, Math.round(raw.metrics.domNodeCount))
     },
     tech: normalizeTech(raw.tech, baseUrl),
+    // The final category is assigned by the host (it knows whether a session
+    // was injected); the worker only reports the raw, non-secret signals.
+    authStatus: 'unknown',
+    loginSignals: deriveLoginSignals(raw),
     status: context.status ?? 'completed',
     errorCode: context.errorCode ?? null,
     errorMessage: trimToNull(context.errorMessage, EXTRACTION_LIMITS.maxTextFieldLength),
@@ -213,6 +239,8 @@ export function buildUnavailablePage(
       jsGlobals: {},
       htmlSnippet: ''
     },
+    authStatus: 'unknown',
+    loginSignals: { redirectedToLogin: false, hasPasswordField: false, hasCaptcha: false },
     status: context.status,
     errorCode: context.errorCode,
     errorMessage: trimToNull(context.errorMessage, EXTRACTION_LIMITS.maxTextFieldLength),

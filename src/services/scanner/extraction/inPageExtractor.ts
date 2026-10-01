@@ -152,6 +152,32 @@ function ${PAGE_EXTRACTOR_FUNCTION_NAME}() {
 
   var domNodeCount = document.querySelectorAll('*').length;
 
+  // Auth-wall DOM signals (AUTH-SCANNING.md section 3.1). Presence probes only;
+  // no value is read and no script is executed. The redirect-to-login signal is
+  // computed worker-side from the requested/final URLs, so it is not produced here.
+  var hasPasswordField = false;
+  try {
+    hasPasswordField = document.querySelector('input[type="password"]') !== null;
+  } catch (e) {
+    hasPasswordField = false;
+  }
+  var hasCaptcha = false;
+  try {
+    var captchaSelectors = [
+      '.g-recaptcha', '[data-sitekey]', '#cf-challenge-running', '#challenge-form',
+      'iframe[src*="recaptcha"]', 'iframe[src*="hcaptcha"]', 'iframe[src*="turnstile"]',
+      '[class*="turnstile"]'
+    ];
+    for (var c = 0; c < captchaSelectors.length; c++) {
+      if (document.querySelector(captchaSelectors[c])) {
+        hasCaptcha = true;
+        break;
+      }
+    }
+  } catch (e) {
+    hasCaptcha = false;
+  }
+
   var loadTimeMs = 0;
   var domContentLoadedTimeMs = 0;
   try {
@@ -168,6 +194,10 @@ function ${PAGE_EXTRACTOR_FUNCTION_NAME}() {
 
   return {
     title: title,
+    loginSignals: {
+      hasPasswordField: hasPasswordField,
+      hasCaptcha: hasCaptcha
+    },
     metaDescription: metaContent('meta[name="description"]'),
     canonicalUrl: canonicalUrl,
     robotsMeta: metaContent('meta[name="robots"]'),
@@ -206,3 +236,23 @@ export const PAGE_EXTRACTOR_EXPRESSION = `(() => { ${PAGE_EXTRACTOR_SOURCE} retu
 export function buildExtractorExpression(): string {
   return PAGE_EXTRACTOR_EXPRESSION;
 }
+
+/**
+ * Self-contained login-wall probe used by the `detectLogin` worker command.
+ * It is a pure presence check (password input / sign-in form / CAPTCHA marker)
+ * and executes no page script of its own. Kept separate from the full extractor
+ * so a session-verification pass does not pay for a whole page extraction.
+ */
+export const LOGIN_PROBE_EXPRESSION = `(() => {
+  var hasPasswordField = false;
+  var hasLoginForm = false;
+  var hasCaptcha = false;
+  try { hasPasswordField = document.querySelector('input[type="password"]') !== null; } catch (e) {}
+  try { hasLoginForm = document.querySelector('form[action*="login" i], form[action*="signin" i], form[action*="auth" i]') !== null; } catch (e) {}
+  try {
+    var sels = ['.g-recaptcha', '[data-sitekey]', '#cf-challenge-running', '#challenge-form',
+      'iframe[src*="recaptcha"]', 'iframe[src*="hcaptcha"]', 'iframe[src*="turnstile"]', '[class*="turnstile"]'];
+    for (var i = 0; i < sels.length; i++) { if (document.querySelector(sels[i])) { hasCaptcha = true; break; } }
+  } catch (e) {}
+  return { hasPasswordField: hasPasswordField || hasLoginForm, hasCaptcha: hasCaptcha };
+})()`;

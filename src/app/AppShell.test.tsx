@@ -5,6 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { routes } from './router';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useScanStore } from '../stores/scanStore';
+import { useAuthStore } from '../stores/authStore';
 
 function renderAt(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
@@ -15,6 +16,7 @@ describe('application shell', () => {
   beforeEach(() => {
     useScanStore.setState({ targetUrl: '' });
     useSettingsStore.setState({ theme: 'dark' });
+    useAuthStore.getState().reset();
   });
 
   it('renders the primary navigation with active state on the home route', () => {
@@ -40,6 +42,24 @@ describe('application shell', () => {
     expect(screen.getByRole('heading', { name: 'Scan', level: 1 })).toBeInTheDocument();
     expect(screen.getByLabelText(/max crawl depth/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /start scan/i })).toBeDisabled();
+  });
+
+  it('renders the authentication panel honestly (no fabricated session)', async () => {
+    const user = userEvent.setup();
+    renderAt('/scan');
+
+    expect(screen.getByRole('heading', { name: 'Authentication', level: 2 })).toBeInTheDocument();
+
+    // No persisted session is available in this shell test, so the "use saved
+    // session" choice must be disabled and the state must read "No session".
+    const sessionRadio = screen.getByRole('radio', { name: /use saved session/i });
+    expect(sessionRadio).toBeDisabled();
+    expect(screen.getByRole('radio', { name: /no authentication/i })).toBeChecked();
+    expect(screen.getByText(/no session captured for this project/i)).toBeInTheDocument();
+
+    // No credentials are ever rendered.
+    expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: /no authentication/i }));
   });
 
   it('renders the settings route and switches theme', async () => {

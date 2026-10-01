@@ -51,6 +51,9 @@ export type AppEventType =
   | 'auth.required'
   | 'auth.completed'
   | 'auth.failed'
+  | 'auth.session_cleared'
+  | 'auth.session_expired'
+  | 'auth.scan_started'
   | 'blueprint.started'
   | 'blueprint.generated'
   | 'blueprint.validation_failed'
@@ -170,6 +173,33 @@ export interface BrowserSessionPayload extends BaseEventPayload {
   domain: 'browser';
   engine: string;
   sessionId: string;
+}
+
+/** Authentication session payloads (Phase 5 - authenticated scanning). */
+export interface AuthCompletedPayload extends BaseEventPayload {
+  domain: 'auth';
+  /** Target domain the session was captured for (never a secret). */
+  targetDomain?: string;
+  cookieCount: number;
+  originCount: number;
+}
+
+export interface AuthFailedPayload extends BaseEventPayload {
+  domain: 'auth';
+  code: string;
+  message: string;
+}
+
+export interface AuthSessionClearedPayload extends BaseEventPayload {
+  domain: 'auth';
+  removed: number;
+}
+
+export interface AuthScanStartedPayload extends BaseEventPayload {
+  domain: 'auth';
+  scanId: string;
+  /** True when a captured session was injected for this scan. */
+  authenticated: boolean;
 }
 
 /** Scanner (crawler) payloads (Phase 4). */
@@ -309,6 +339,12 @@ export interface AppEventPayloadMap {
   'technology.scan_started': TechnologyScanStartedPayload;
   'technology.detected': TechnologyDetectedPayload;
   'technology.scan_completed': TechnologyScanCompletedPayload;
+  'auth.required': AuthFailedPayload;
+  'auth.failed': AuthFailedPayload;
+  'auth.completed': AuthCompletedPayload;
+  'auth.session_cleared': AuthSessionClearedPayload;
+  'auth.session_expired': AuthFailedPayload;
+  'auth.scan_started': AuthScanStartedPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;
@@ -353,8 +389,8 @@ export function createEvent<T extends AppEventType>(
       eventId: createEventId(),
       timestamp: new Date().toISOString(),
       domain,
-      ...payload,
-    } as AppEventPayloadMap[T],
+      ...payload
+    } as AppEventPayloadMap[T]
   };
 }
 

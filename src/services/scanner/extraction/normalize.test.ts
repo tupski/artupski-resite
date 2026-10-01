@@ -12,6 +12,7 @@ function rawEvidence(overrides: Partial<PageExtraction> = {}): PageExtraction {
     finalUrl: 'https://example.com/',
     httpStatus: 200,
     title: 'Home',
+    loginSignals: { hasPasswordField: false, hasCaptcha: false },
     metaDescription: 'A description',
     canonicalUrl: '/canonical',
     robotsMeta: 'index,follow',

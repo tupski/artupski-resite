@@ -20,6 +20,7 @@
  * browser runtime resolves to `null`; this service reports that plainly instead
  * of pretending a scan can run.
  */
+import { createEvent, eventBus } from '../infra/eventBus';
 import type { StructuredError } from '../infra/errors';
 import { toStructuredError } from '../infra/errors';
 import { logger } from '../infra/logger';
@@ -27,6 +28,8 @@ import { validateTargetUrl } from '../../lib/url';
 import { storageService } from '../storage';
 import { projectService } from '../projects/projectService';
 import { getBrowserRuntime, type BrowserRuntime } from '../browser';
+import { loadSessionForScan } from '../auth/authSessionService';
+import type { AuthStorageState } from '../infra/workerProtocol';
 import { ScannerWorkerClient } from './scannerWorkerClient';
 import { createCrawlerService, createStorageCrawlPersistence } from './crawlerFactory';
 import type { CrawlResult, CrawlerService } from './crawlerService';
@@ -48,6 +51,12 @@ export interface ScanRunRequest {
   seedUrl: string;
   limits?: { maxDepth?: number; maxPages?: number };
   headless?: boolean;
+  /**
+   * When true, load the project's stored session, inject it into the isolated
+   * browser context, and fail the scan if authentication does not hold. When
+   * false/omitted the run is a normal unauthenticated crawl (unchanged).
+   */
+  authenticated?: boolean;
 }
 
 export interface ScanRunOutcome {
@@ -58,12 +67,16 @@ export interface ScanRunOutcome {
   pageFailures: number;
   /** Number of technologies persisted for this scan (Phase 5). */
   technologiesDetected: number;
+  /** Pages classified `auth_required` during this scan. */
+  pagesAuthRequired: number;
+  /** Pages classified `blocked` (CAPTCHA/WAF) during this scan. */
+  pagesBlocked: number;
+  /** True when a captured session was injected for this run. */
+  authenticated: boolean;
   error: StructuredError | null;
 }
 
-export type ScanServiceResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: StructuredError };
+export type ScanServiceResult<T> = { ok: true; data: T } | { ok: false; error: StructuredError };
 
 /** Live run bookkeeping so `cancel` can reach the owning service instance. */
 interface ActiveScan {
@@ -112,7 +125,9 @@ export async function runScan(request: ScanRunRequest): Promise<ScanServiceResul
   if (!projectResult.data) {
     return {
       ok: false,
-      error: createScannerError('INVALID_URL', { message: 'The project for this scan no longer exists.' })
+      error: createScannerError('INVALID_URL', {
+        message: 'The project for this scan no longer exists.'
+      })
     };
   }
 
@@ -122,7 +137,8 @@ export async function runScan(request: ScanRunRequest): Promise<ScanServiceResul
       ok: false,
       error: createProcessError('PROCESS_SPAWN_FAILED', {
         message: 'The crawler requires the desktop application.',
-        suggestedAction: 'Start the desktop app with `npm run tauri:dev` (the browser preview cannot crawl).'
+        suggestedAction:
+          'Start the desktop app with `npm run tauri:dev` (the browser preview cannot crawl).'
       })
     };
   }
@@ -138,7 +154,23 @@ export async function runScan(request: ScanRunRequest): Promise<ScanServiceResul
     };
   }
 
-  const launch = await runtime.launchSession({ headless: request.headless ?? true });
+  // For an authenticated run, load and decrypt the stored session BEFORE
+  // launching the browser. A missing/expired/mismatched session fails here, so
+  // an authenticated scan can never silently degrade into a public crawl.
+  const authenticated = request.authenticated === true;
+  let authState: AuthStorageState | undefined;
+  if (authenticated) {
+    const loaded = await loadSessionForScan(request.projectId, validation.url);
+    if (!loaded.ok) {
+      return { ok: false, error: loaded.error };
+    }
+    authState = loaded.data;
+  }
+
+  const launch = await runtime.launchSession({
+    headless: request.headless ?? true,
+    ...(authState ? { authState } : {})
+  });
   if (!launch.ok) {
     return { ok: false, error: launch.error };
   }
@@ -153,22 +185,35 @@ export async function runScan(request: ScanRunRequest): Promise<ScanServiceResul
   const run: ActiveScan = { scanId: request.scanId, service };
   active = run;
 
+  eventBus.emit(
+    createEvent('auth.scan_started', {
+      scanId: request.scanId,
+      projectId: request.projectId,
+      authenticated
+    })
+  );
+
   try {
     const result = await service.run({
       projectId: request.projectId,
       seedUrl: validation.url,
       scanId: request.scanId,
       sessionId,
+      authenticated,
+      requireAuthentication: authenticated,
       limits: {
         ...(request.limits?.maxDepth !== undefined ? { maxDepth: request.limits.maxDepth } : {}),
         ...(request.limits?.maxPages !== undefined ? { maxPages: request.limits.maxPages } : {})
       }
     });
-    return { ok: true, data: toOutcome(result) };
+    return { ok: true, data: toOutcome(result, authenticated) };
   } catch (error) {
     // The service already maps expected failures into `CrawlResult`; this guard
     // keeps an unexpected throw from reaching the UI as a raw stack trace.
-    return { ok: false, error: toStructuredError(error, { code: 'UNKNOWN_ERROR', category: 'process' }) };
+    return {
+      ok: false,
+      error: toStructuredError(error, { code: 'UNKNOWN_ERROR', category: 'process' })
+    };
   } finally {
     await runtime.closeSession(sessionId);
     if (active === run) {
@@ -202,7 +247,7 @@ export function setScanRuntimeProviderForTests(provider: RuntimeProvider | null)
   runtimeProvider = provider ?? getBrowserRuntime;
 }
 
-function toOutcome(result: CrawlResult): ScanRunOutcome {
+function toOutcome(result: CrawlResult, authenticated: boolean): ScanRunOutcome {
   return {
     scanId: result.scanId,
     status: result.status,
@@ -210,6 +255,9 @@ function toOutcome(result: CrawlResult): ScanRunOutcome {
     pagesDiscovered: result.pagesDiscovered,
     pageFailures: result.pageFailures,
     technologiesDetected: result.technologiesDetected,
+    pagesAuthRequired: result.pagesAuthRequired,
+    pagesBlocked: result.pagesBlocked,
+    authenticated,
     error: result.error
   };
 }

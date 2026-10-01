@@ -42,7 +42,44 @@ export type WorkerMessageType = 'command' | 'result' | 'event' | 'log' | 'error'
 export type BrowserEngine = 'chromium';
 
 /** The closed set of operations the worker understands. */
-export type WorkerCommandName = 'ping' | 'launch' | 'navigate' | 'close' | 'extract' | 'abort';
+export type WorkerCommandName =
+  'ping' | 'launch' | 'navigate' | 'close' | 'extract' | 'abort' | 'detectLogin';
+
+/**
+ * A per-domain storage state the host injects into a browser context.
+ * Deliberately loose (`Record<string, string>` for storage) because the worker
+ * must not depend on host domain types; the host validates the shape before it
+ * is ever sent, and the worker re-validates on receipt.
+ */
+export interface AuthStorageState {
+  cookies: Array<{
+    name: string;
+    value: string;
+    domain: string;
+    path: string;
+    expires: number;
+    httpOnly: boolean;
+    secure: boolean;
+    sameSite: 'Strict' | 'Lax' | 'None';
+  }>;
+  origins: Array<{
+    origin: string;
+    localStorage: Record<string, string>;
+    sessionStorage?: Record<string, string>;
+  }>;
+}
+
+/** Signals the worker reports when classifying a page as an auth wall. */
+export interface LoginDetectionSignals {
+  /** Redirect (or SPA route) landed on a known login path. */
+  redirectedToLogin: boolean;
+  /** A password input / sign-in form was present on the final page. */
+  hasPasswordField: boolean;
+  /** A CAPTCHA / WAF challenge marker was present. */
+  hasCaptcha: boolean;
+  /** Non-2xx status observed (401/403/429) when no page could be extracted. */
+  httpStatus: number | null;
+}
 
 /** Default content types the crawler will extract; anything else is skipped. */
 export const DEFAULT_EXTRACTABLE_CONTENT_TYPES: readonly string[] = [
@@ -67,6 +104,13 @@ export interface LaunchCommandPayload {
   headless: boolean;
   /** Optional explicit executable; when omitted Playwright resolves its own. */
   executablePath?: string;
+  /**
+   * Optional captured storage state to isolate into this session's context.
+   * When present, the worker creates an explicit context with this state so a
+   * plain `launch()` (no state) can never inherit it. The state is never
+   * echoed back in any result/log/event frame.
+   */
+  authState?: AuthStorageState;
 }
 
 export interface NavigateCommandPayload {
@@ -107,13 +151,27 @@ export interface AbortCommandPayload {
   sessionId: string;
 }
 
+/**
+ * Inspect a URL (using the session's stored auth state) for login-wall
+ * indicators WITHOUT extracting page data. Used to verify the stored session
+ * still authenticates before a scan relies on it.
+ */
+export interface DetectLoginCommandPayload {
+  command: 'detectLogin';
+  sessionId: string;
+  url: string;
+  /** Navigation timeout in ms. The worker clamps this to <= 30000. */
+  timeoutMs: number;
+}
+
 export type WorkerCommandPayload =
   | PingCommandPayload
   | LaunchCommandPayload
   | NavigateCommandPayload
   | CloseCommandPayload
   | ExtractCommandPayload
-  | AbortCommandPayload;
+  | AbortCommandPayload
+  | DetectLoginCommandPayload;
 
 // ---------------------------------------------------------------------------
 // Result payloads (worker -> host)
@@ -167,13 +225,24 @@ export interface AbortResultPayload {
   sessionId: string;
 }
 
+export interface DetectLoginResultPayload {
+  command: 'detectLogin';
+  sessionId: string;
+  url: string;
+  /** Final URL after any redirects (login redirect detection compares these). */
+  finalUrl: string;
+  status: number | null;
+  signals: LoginDetectionSignals;
+}
+
 export type WorkerResultPayload =
   | PingResultPayload
   | LaunchResultPayload
   | NavigateResultPayload
   | CloseResultPayload
   | ExtractResultPayload
-  | AbortResultPayload;
+  | AbortResultPayload
+  | DetectLoginResultPayload;
 
 // ---------------------------------------------------------------------------
 // Event / log / error payloads
@@ -269,7 +338,15 @@ export function serializeMessage(message: WorkerMessage): string {
 
 const MESSAGE_TYPES: readonly WorkerMessageType[] = ['command', 'result', 'event', 'log', 'error'];
 
-const COMMAND_NAMES: readonly WorkerCommandName[] = ['ping', 'launch', 'navigate', 'close', 'extract', 'abort'];
+const COMMAND_NAMES: readonly WorkerCommandName[] = [
+  'ping',
+  'launch',
+  'navigate',
+  'close',
+  'extract',
+  'abort',
+  'detectLogin'
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -283,6 +360,41 @@ function isCommandName(value: unknown): value is WorkerCommandName {
   return typeof value === 'string' && (COMMAND_NAMES as readonly string[]).includes(value);
 }
 
+/**
+ * Structural validation for an injected storage state. Bounded so a hostile
+ * (or corrupt) payload cannot smuggle an oversized or malformed context into
+ * the worker; a bad shape is rejected at the protocol boundary.
+ */
+export function isAuthStorageState(value: unknown): value is AuthStorageState {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (!Array.isArray(value.cookies) || value.cookies.length > 500) {
+    return false;
+  }
+  if (!Array.isArray(value.origins) || value.origins.length > 50) {
+    return false;
+  }
+  const cookieOk = value.cookies.every(
+    (cookie) =>
+      isRecord(cookie) &&
+      isNonEmptyString(cookie.name) &&
+      typeof cookie.value === 'string' &&
+      isNonEmptyString(cookie.domain) &&
+      typeof cookie.path === 'string'
+  );
+  if (!cookieOk) {
+    return false;
+  }
+  return value.origins.every(
+    (origin) =>
+      isRecord(origin) &&
+      isNonEmptyString(origin.origin) &&
+      isRecord(origin.localStorage) &&
+      (origin.sessionStorage === undefined || isRecord(origin.sessionStorage))
+  );
+}
+
 function validateCommandPayload(payload: unknown): boolean {
   if (!isRecord(payload) || !isCommandName(payload.command)) {
     return false;
@@ -294,7 +406,8 @@ function validateCommandPayload(payload: unknown): boolean {
       return (
         payload.engine === 'chromium' &&
         typeof payload.headless === 'boolean' &&
-        (payload.executablePath === undefined || isNonEmptyString(payload.executablePath))
+        (payload.executablePath === undefined || isNonEmptyString(payload.executablePath)) &&
+        (payload.authState === undefined || isAuthStorageState(payload.authState))
       );
     case 'navigate':
       return (
@@ -320,6 +433,13 @@ function validateCommandPayload(payload: unknown): boolean {
       );
     case 'abort':
       return isNonEmptyString(payload.sessionId);
+    case 'detectLogin':
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNonEmptyString(payload.url) &&
+        typeof payload.timeoutMs === 'number' &&
+        Number.isFinite(payload.timeoutMs)
+      );
     default:
       return false;
   }
@@ -333,7 +453,11 @@ function validateResultPayload(payload: unknown): boolean {
     case 'ping':
       return payload.pong === true && isNonEmptyString(payload.workerVersion);
     case 'launch':
-      return isNonEmptyString(payload.sessionId) && payload.engine === 'chromium' && isNonEmptyString(payload.version);
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        payload.engine === 'chromium' &&
+        isNonEmptyString(payload.version)
+      );
     case 'navigate':
       return (
         isNonEmptyString(payload.sessionId) &&
@@ -347,6 +471,14 @@ function validateResultPayload(payload: unknown): boolean {
       return isNonEmptyString(payload.sessionId) && isNormalizedPageShape(payload.page);
     case 'abort':
       return isNonEmptyString(payload.sessionId);
+    case 'detectLogin':
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNonEmptyString(payload.url) &&
+        isNonEmptyString(payload.finalUrl) &&
+        (payload.status === null || typeof payload.status === 'number') &&
+        isRecord(payload.signals)
+      );
     default:
       return false;
   }
@@ -378,7 +510,9 @@ function isNormalizedPageShape(value: unknown): boolean {
     (value.errorCode === null || typeof value.errorCode === 'string') &&
     (value.errorMessage === null || typeof value.errorMessage === 'string') &&
     Array.isArray(value.warnings) &&
-    typeof value.capturedAt === 'string'
+    typeof value.capturedAt === 'string' &&
+    typeof value.authStatus === 'string' &&
+    isRecord(value.loginSignals)
   );
 }
 
@@ -436,7 +570,10 @@ export function validateMessage(value: unknown): { ok: true } | { ok: false; rea
   if (!isNonEmptyString(value.id)) {
     return { ok: false, reason: 'Missing correlation id.' };
   }
-  if (typeof value.type !== 'string' || !(MESSAGE_TYPES as readonly string[]).includes(value.type)) {
+  if (
+    typeof value.type !== 'string' ||
+    !(MESSAGE_TYPES as readonly string[]).includes(value.type)
+  ) {
     return { ok: false, reason: `Unknown message type "${String(value.type)}".` };
   }
   if (value.error !== undefined && !isRecord(value.error)) {
@@ -461,8 +598,7 @@ export function validateMessage(value: unknown): { ok: true } | { ok: false; rea
 // ---------------------------------------------------------------------------
 
 export type ParseResult =
-  | { ok: true; message: WorkerMessage }
-  | { ok: false; error: StructuredError };
+  { ok: true; message: WorkerMessage } | { ok: false; error: StructuredError };
 
 /**
  * Parse one newline-delimited frame. Empty/whitespace-only frames are rejected
@@ -479,7 +615,9 @@ export function parseMessage(raw: string): ParseResult {
   if (trimmed.length > MAX_FRAME_BYTES) {
     return {
       ok: false,
-      error: createProtocolViolation(`Frame of ${trimmed.length} bytes exceeds the ${MAX_FRAME_BYTES} byte limit.`)
+      error: createProtocolViolation(
+        `Frame of ${trimmed.length} bytes exceeds the ${MAX_FRAME_BYTES} byte limit.`
+      )
     };
   }
 
@@ -583,7 +721,12 @@ export function createResultMessage(
 
 /** Build a typed event envelope. */
 export function createEventMessage(payload: WorkerEventPayload): WorkerEventMessage {
-  return { protocolVersion: WORKER_PROTOCOL_VERSION, id: createMessageId(), type: 'event', payload };
+  return {
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    id: createMessageId(),
+    type: 'event',
+    payload
+  };
 }
 
 /** Build a typed log envelope. */
@@ -593,7 +736,12 @@ export function createLogMessage(payload: WorkerLogPayload): WorkerLogMessage {
 
 /** Build a typed error envelope. */
 export function createErrorMessage(payload: WorkerErrorPayload): WorkerErrorMessage {
-  return { protocolVersion: WORKER_PROTOCOL_VERSION, id: createMessageId(), type: 'error', payload };
+  return {
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    id: createMessageId(),
+    type: 'error',
+    payload
+  };
 }
 
 /** Narrowing helpers used by consumers (kept explicit; no `any`). */

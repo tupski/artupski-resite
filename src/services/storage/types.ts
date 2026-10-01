@@ -13,6 +13,7 @@
  */
 import type {
   AppSetting,
+  AuthSession,
   Project,
   ProjectStatus,
   Scan,
@@ -68,6 +69,7 @@ export interface ScanPageRow {
   canonical_url: string | null;
   robots_meta: string | null;
   status: string;
+  auth_status: string | null;
   error_code: string | null;
   error_message: string | null;
   load_time_ms: number | null;
@@ -98,6 +100,24 @@ export interface ScanTechnologyRow {
   pages: string | null;
   limitation: string | null;
   metadata: string | null;
+  created_at: string;
+}
+
+/** Raw `auth_sessions` row shape as returned by sql.js (migration 004). */
+export interface AuthSessionRow {
+  id: string;
+  project_id: string;
+  auth_type: string;
+  session_name: string;
+  target_domain: string;
+  ciphertext: string;
+  iv: string;
+  auth_tag: string;
+  salt: string;
+  cookie_count: number;
+  origin_count: number;
+  is_active: number;
+  expires_at: string | null;
   created_at: string;
 }
 
@@ -172,6 +192,7 @@ export function toScanPage(row: ScanPageRow): ScanPage {
     canonicalUrl: row.canonical_url,
     robotsMeta: row.robots_meta,
     status: row.status as ScanPageStatus,
+    authStatus: (row.auth_status as ScanPage['authStatus']) ?? null,
     errorCode: row.error_code,
     errorMessage: row.error_message,
     loadTimeMs: row.load_time_ms,
@@ -203,6 +224,25 @@ export function toScanTechnology(row: ScanTechnologyRow): ScanTechnology {
     pages: parseJsonArray<string>(row.pages),
     limitation: row.limitation,
     metadata: row.metadata,
+    createdAt: row.created_at
+  };
+}
+
+export function toAuthSession(row: AuthSessionRow): AuthSession {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    authType: row.auth_type as AuthSession['authType'],
+    sessionName: row.session_name,
+    targetDomain: row.target_domain,
+    ciphertext: row.ciphertext,
+    iv: row.iv,
+    authTag: row.auth_tag,
+    salt: row.salt,
+    cookieCount: row.cookie_count,
+    originCount: row.origin_count,
+    isActive: row.is_active === 1,
+    expiresAt: row.expires_at,
     createdAt: row.created_at
   };
 }
@@ -265,6 +305,8 @@ export interface UpsertScanPageInput {
   canonicalUrl: string | null;
   robotsMeta: string | null;
   status: ScanPageStatus;
+  /** Auth classification for the page (null when unclassified). */
+  authStatus: ScanPage['authStatus'];
   errorCode: string | null;
   errorMessage: string | null;
   loadTimeMs: number | null;
@@ -286,6 +328,23 @@ export interface CreateScanTechnologyInput {
   detectionSource: string;
   version?: string | null;
   metadata?: string | null;
+}
+
+/** A captured (already encrypted) session ready to persist. */
+export interface CreateAuthSessionInput {
+  projectId: string;
+  authType: AuthSession['authType'];
+  sessionName: string;
+  targetDomain: string;
+  ciphertext: string;
+  iv: string;
+  authTag: string;
+  salt: string;
+  cookieCount: number;
+  originCount: number;
+  expiresAt: string | null;
+  /** Optional caller-supplied id; the repository falls back to a UUID. */
+  id?: string;
 }
 
 /** A Phase 5 detection result ready to persist (upsert key: scanId+technologyId). */

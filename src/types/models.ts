@@ -10,14 +10,10 @@
  * scan technologies, app settings). Pages, assets, blueprints, and auth
  * sessions are deferred to later phases and are intentionally absent.
  */
+import type { PageAuthStatus } from '../services/auth/types';
 
 export type ProjectStatus =
-  | 'idle'
-  | 'scanning'
-  | 'blueprint_ready'
-  | 'generating'
-  | 'completed'
-  | 'error';
+  'idle' | 'scanning' | 'blueprint_ready' | 'generating' | 'completed' | 'error';
 
 export type ScanStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
 
@@ -84,6 +80,8 @@ export interface ScanPage {
   canonicalUrl: string | null;
   robotsMeta: string | null;
   status: ScanPageStatus;
+  /** Auth classification of this page (migration 005; null on legacy rows). */
+  authStatus: PageAuthStatus | null;
   errorCode: string | null;
   errorMessage: string | null;
   loadTimeMs: number | null;
@@ -138,6 +136,30 @@ export interface AppSetting {
   key: string;
   value: string;
   updatedAt: string;
+}
+
+/**
+ * A captured authentication session (migration 004). The encrypted envelope is
+ * split into `ciphertext`/`iv`/`authTag` (Base64) plus the per-project `salt`
+ * needed to re-derive the key. NO plaintext cookie value or storage state is
+ * ever present on this shape.
+ */
+export interface AuthSession {
+  id: string;
+  projectId: string;
+  /** Capture mechanism; the interactive flow is the only one implemented. */
+  authType: 'cookie' | 'bearer_token' | 'basic_auth' | 'session_storage' | 'interactive';
+  sessionName: string;
+  targetDomain: string;
+  ciphertext: string;
+  iv: string;
+  authTag: string;
+  salt: string;
+  cookieCount: number;
+  originCount: number;
+  isActive: boolean;
+  expiresAt: string | null;
+  createdAt: string;
 }
 
 export const PROJECT_STATUSES: readonly ProjectStatus[] = [

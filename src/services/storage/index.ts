@@ -39,6 +39,7 @@ export {
   type RunMigrationsOptions
 } from './migrations';
 
+export { AuthSessionRepository } from './repositories/authSessionRepository';
 export { ProjectRepository } from './repositories/projectRepository';
 export {
   ScanRepository,
@@ -57,6 +58,7 @@ export {
 } from './errors';
 
 export type {
+  CreateAuthSessionInput,
   CreateProjectInput,
   CreateScanInput,
   CreateScanTechnologyInput,

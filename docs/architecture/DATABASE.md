@@ -64,6 +64,18 @@ Phase 5 (technology detection) reuses the `scan_technologies` table created in `
 - **Cascade**: `scan_technologies.scan_id` remains `REFERENCES scans(id) ON DELETE CASCADE`, so deleting a scan removes its detections (verified in tests).
 - **Lifecycle ordering**: detection is persisted after page batches are durable and **before** the scan is marked `completed`, so a completed scan always has its detections. A cancelled crawl retains the detections collected so far; a fatal crawl failure does not run detection.
 
+### 2.4 Authentication & Session Scanning Implementation Note (as built)
+
+The authentication phase adds two **new, forward-only** migrations; `001`–`003` are never edited.
+
+- **Migration `004_auth_sessions.ts` (version `4`)** creates `auth_sessions`:
+  - Columns: `id`, `project_id` (`REFERENCES projects(id) ON DELETE CASCADE`), `auth_type` (`CHECK IN ('cookie','bearer_token','basic_auth','session_storage','interactive')`), `session_name`, `target_domain`, `ciphertext`, `iv`, `auth_tag` (the AES-256-GCM envelope, Base64), `salt` (per-project PBKDF2 salt), `cookie_count`, `origin_count`, `is_active`, `expires_at`, `created_at`.
+  - **Adaptation (documented, not silent)**: the section-3 sketch carried one opaque `credentials_encrypted` blob and a `storage_state_path`. The spec's own `EncryptedSessionStateModel` splits the envelope into `encryptedPayload`/`iv`/`authTag`, so those three columns are created explicitly; `storage_state_path` is **not** created because section 4.1 forbids a plaintext session file on disk. `salt` and `target_domain` are additions that make the key re-derivable and let a session be domain-scoped before injection.
+  - **Indexes**: `idx_auth_sessions_project_id`, `idx_auth_sessions_expires_at`, and a **partial UNIQUE** `idx_auth_sessions_project_active (project_id) WHERE is_active = 1` enforcing one active session per project (DB-level isolation).
+- **Migration `005_scan_page_auth.ts` (version `5`)** adds a nullable `auth_status` column to `scan_pages` plus `idx_scan_pages_auth_status`. Values are the five-value taxonomy in `AUTH-SCANNING.md` section 3.2, validated in TypeScript (no CHECK, so legacy NULL rows remain valid). No cookie value/token is ever written to `scan_pages`.
+- **Repository**: `AuthSessionRepository` (`src/services/storage/repositories/authSessionRepository.ts`) owns all SQL for `auth_sessions` - `saveSession` (deactivates the prior active row in one transaction, then inserts), `findActive`, `listByProject`, `deleteByProject`, `deleteById`, `purgeExpired`, and `isExpired`. `ScanPageRepository` gains `authStatus` on upsert/read.
+- **Retention/deletion**: a session is deleted by "Clear Session" (`deleteByProject`, a cryptographic deletion) or by the pre-crawl `purgeExpired`; `ON DELETE CASCADE` removes sessions with their project. Expiry comparison uses the same ISO-8601 UTC format the service writes.
+
 ---
 
 ## 3. Relational Schema & Table Definitions

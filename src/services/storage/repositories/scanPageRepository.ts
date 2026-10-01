@@ -16,10 +16,15 @@ import { toScanPage, type ScanPageRow, type UpsertScanPageInput } from '../types
 
 const COLUMNS =
   'id, scan_id, url, final_url, path, depth, http_status, title, meta_description, canonical_url, ' +
-  'robots_meta, status, error_code, error_message, load_time_ms, dom_content_loaded_time_ms, ' +
+  'robots_meta, status, auth_status, error_code, error_message, load_time_ms, dom_content_loaded_time_ms, ' +
   'dom_node_count, headings, internal_links, external_links, images, warnings, captured_at, created_at';
 
-const VALID_STATUSES: ReadonlySet<ScanPageStatus> = new Set(['completed', 'failed', 'timeout', 'skipped']);
+const VALID_STATUSES: ReadonlySet<ScanPageStatus> = new Set([
+  'completed',
+  'failed',
+  'timeout',
+  'skipped'
+]);
 
 /** Derive the indexable URL path; invalid URLs fall back to the raw string. */
 export function pathForUrl(url: string): string {
@@ -43,6 +48,7 @@ function toParams(input: UpsertScanPageInput): (string | number | null)[] {
     input.canonicalUrl,
     input.robotsMeta,
     input.status,
+    input.authStatus,
     input.errorCode,
     input.errorMessage,
     input.loadTimeMs,
@@ -59,9 +65,9 @@ function toParams(input: UpsertScanPageInput): (string | number | null)[] {
 
 const UPSERT_SQL = `INSERT INTO scan_pages (
   id, scan_id, url, final_url, path, depth, http_status, title, meta_description, canonical_url,
-  robots_meta, status, error_code, error_message, load_time_ms, dom_content_loaded_time_ms,
+  robots_meta, status, auth_status, error_code, error_message, load_time_ms, dom_content_loaded_time_ms,
   dom_node_count, headings, internal_links, external_links, images, warnings, captured_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(scan_id, url) DO UPDATE SET
   final_url = excluded.final_url,
   path = excluded.path,
@@ -72,6 +78,7 @@ ON CONFLICT(scan_id, url) DO UPDATE SET
   canonical_url = excluded.canonical_url,
   robots_meta = excluded.robots_meta,
   status = excluded.status,
+  auth_status = excluded.auth_status,
   error_code = excluded.error_code,
   error_message = excluded.error_message,
   load_time_ms = excluded.load_time_ms,
@@ -138,7 +145,9 @@ export class ScanPageRepository {
   async countByScan(scanId: string): Promise<number> {
     const row = this.context
       .getDatabase()
-      .get<{ total: number }>('SELECT COUNT(*) AS total FROM scan_pages WHERE scan_id = ?;', [scanId]);
+      .get<{ total: number }>('SELECT COUNT(*) AS total FROM scan_pages WHERE scan_id = ?;', [
+        scanId
+      ]);
     return row?.total ?? 0;
   }
 

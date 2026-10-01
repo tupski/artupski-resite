@@ -14,6 +14,7 @@
  *     and field trimming are applied. Persistence models (a later workstream)
  *     map from this, never from the raw evidence.
  */
+import type { PageAuthStatus } from '../../auth/types.ts';
 
 /** Outcome of attempting to extract one page. */
 export type PageStatus = 'completed' | 'failed' | 'timeout' | 'skipped';
@@ -83,6 +84,8 @@ export interface PageExtraction {
   finalUrl: string;
   httpStatus: number | null;
   title: string;
+  /** Auth-wall DOM signals captured by the in-page extractor (no secret). */
+  loginSignals: { hasPasswordField: boolean; hasCaptcha: boolean };
   metaDescription: string | null;
   canonicalUrl: string | null;
   robotsMeta: string | null;
@@ -112,9 +115,33 @@ export interface NormalizedPage {
   metrics: PageMetrics;
   /** Bounded Phase 5 detection evidence; absent on failure/skip pages. */
   tech?: PageTechEvidence;
+  /**
+   * Authentication classification of this page (AUTH-SCANNING.md section 3.2).
+   * The worker derives the raw signals; the host finalizes the category with
+   * knowledge of whether a session was injected. Never contains a secret.
+   */
+  authStatus: PageAuthStatus;
+  /** Raw auth-wall signals observed during extraction (no secret material). */
+  loginSignals: LoginSignals;
   status: PageStatus;
   errorCode: string | null;
   errorMessage: string | null;
   warnings: string[];
   capturedAt: string;
+}
+
+/**
+ * Bounded, non-secret auth-wall signals captured for a page. These are the
+ * inputs the host uses to classify `authStatus`; none of them contains a
+ * cookie value, token, or header credential.
+ */
+export interface LoginSignals {
+  redirectedToLogin: boolean;
+  hasPasswordField: boolean;
+  hasCaptcha: boolean;
+}
+
+/** An all-false signal record. */
+export function createEmptyLoginSignals(): LoginSignals {
+  return { redirectedToLogin: false, hasPasswordField: false, hasCaptcha: false };
 }

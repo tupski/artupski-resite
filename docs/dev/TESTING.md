@@ -52,6 +52,15 @@ Unit tests execute in isolation using Vitest. Target 95%+ coverage on determinis
   - System prompt XML isolation tag insertion.
   - PII scrubbing filter verification (regex checks for emails/phones).
 
+### 2.5 Authentication & Session Security (as built)
+- Paths: `src/services/auth/__tests__/crypto.test.ts`, `src/services/auth/__tests__/authSessionService.test.ts`, `src/services/scanner/authClassifier.test.ts`.
+- Tests:
+  - AES-256-GCM encrypt→decrypt round trip; fresh IV per encryption; tamper, wrong-seed, and wrong-salt all **fail closed** (no plaintext returned).
+  - `redactSecrets` removes cookie/authorization/token/password fields recursively (arrays included).
+  - Page-classifier taxonomy: `public` (no wall, no session), `authenticated` (no wall, session), `auth_required` (wall/401/403, with or without a session), `blocked` (CAPTCHA/429), `unknown` (failure/timeout); a wall is **never** reported `authenticated`.
+  - Service lifecycle: capture → persist → load round trip; empty capture rejected (`LOGIN_FAILED`); no active session rejected; **domain mismatch rejected**; metadata carries no ciphertext; clear removes it; expired sessions purged; and an assertion that the plaintext token appears nowhere in the stored row.
+- Fixtures: inline and deterministic (no public websites, no real credentials).
+
 ---
 
 ## 3. Integration Testing Strategy
@@ -68,6 +77,7 @@ Integration tests verify multi-subsystem communication without hitting external 
   - DOM extraction correctness.
   - Network asset discovery and local disk download pipeline.
   - Cookie injection and session persistence across redirects.
+- **Authenticated crawl (as built)**: `src/services/scanner/authScanIntegration.test.ts` (fake worker + in-memory storage) covers a page reached within a session (`authenticated`), an unsatisfied session failing a `requireAuthentication` scan (`failed`, page persisted `auth_required`, no `scanner.completed`), a CAPTCHA/429 (`blocked`), an unauthenticated regression (`public`, `completed`), and that an auth-walled page's links are not followed. `src/services/browser/browserRuntime.auth.test.ts` (fake adapter) asserts the injected `storageState` is passed to `launch`, that a plain launch omits it, and that `detectLogin` returns only signals.
 
 ### 3.2 SQLite Database Repositories
 - Path: `src/services/db/__tests__/repositories.test.ts`

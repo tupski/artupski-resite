@@ -48,6 +48,13 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
 - Collects DOM tree snapshots, computed styles, runtime JS variables, network HAR logs, and page screenshots.
 - Manages authentication sessions via cookie extraction, storage state injection, or interactive login forms.
 
+### 3.1a Authentication & Session Scanning (as built)
+- **Seam**: `src/services/auth/` (`crypto.ts` cipher, `authSessionService.ts` capture/load/clear, `types.ts` taxonomy). The React UI never imports the cipher or the repository directly; it uses `src/stores/authStore.ts`, which reads persisted metadata as the source of truth.
+- **Ownership/lifecycle**: `captureSession` → encrypt (AES-256-GCM) → `AuthSessionRepository.saveSession` (one active session per project, enforced by a partial UNIQUE index) → `loadSessionForScan` (domain-scoped, purges expired) → injected into a dedicated worker context → cleared on close/cancel/clear. Plaintext lives only in memory for the duration of a capture/inject call.
+- **Browser boundary**: the existing Phase 3 `BrowserRuntime` gained `launchSession({ authState })` and `detectLogin(...)`; the worker `launch` applies the state to an isolated `newContext`. No second runtime, worker, or spawner was created.
+- **Crawler**: `CrawlerService` classifies each page (`src/services/scanner/authClassifier.ts`) and persists `scan_pages.auth_status`. `scanService.runScan({ authenticated })` loads the session and sets `requireAuthentication`, so a session that does not hold fails the scan instead of producing a false success.
+- **Deferred**: the interactive headed capture window and OS-keychain-derived key (see `AUTH-SCANNING.md` section 5.3 and `SECURITY.md` section 3.3).
+
 ### 3.2 AI Engine
 - Interfaces with OpenAI-compatible REST API endpoints.
 - Structures prompts for component extraction, blueprint generation, code conversion, and test generation.

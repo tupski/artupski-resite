@@ -73,10 +73,11 @@ describe('SqliteDatabase', () => {
     expect(names).toContain('scan_technologies');
     expect(names).toContain('app_settings');
     expect(names).toContain('schema_migrations');
+    // Added by the authentication phase (migration 004).
+    expect(names).toContain('auth_sessions');
     // Tables owned by later phases must NOT exist yet.
     expect(names).not.toContain('scan_assets');
     expect(names).not.toContain('blueprints');
-    expect(names).not.toContain('auth_sessions');
     await storage.close();
   });
 });

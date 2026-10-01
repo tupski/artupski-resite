@@ -11,7 +11,9 @@ import { SCAN_STATUS_LABEL, type ScanStatus } from '../types/scan';
 import { useScanStore } from '../stores/scanStore';
 import { useProjectsStore } from '../stores/projectsStore';
 import { useTechnologyStore } from '../stores/technologyStore';
+import { useAuthStore } from '../stores/authStore';
 import { validateTargetUrl } from '../lib/url';
+import { cn } from '../lib/cn';
 
 /**
  * Scan configuration + execution surface (UI-SPEC sections 2.1 and 2.2, subset).
@@ -29,7 +31,7 @@ const STATUS_TONE: Record<ScanStatus, StatusTone> = {
   scanning: 'active',
   completed: 'success',
   failed: 'danger',
-  cancelled: 'warning',
+  cancelled: 'warning'
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -67,6 +69,14 @@ export function ScanRoute() {
   const detectionsPartial = useTechnologyStore((state) => state.partial);
   const loadDetections = useTechnologyStore((state) => state.loadForScan);
   const clearDetections = useTechnologyStore((state) => state.clear);
+
+  const authMode = useAuthStore((state) => state.mode);
+  const authSession = useAuthStore((state) => state.session);
+  const authBusy = useAuthStore((state) => state.busy);
+  const authError = useAuthStore((state) => state.error);
+  const setAuthMode = useAuthStore((state) => state.setMode);
+  const refreshAuth = useAuthStore((state) => state.refresh);
+  const clearAuth = useAuthStore((state) => state.clear);
 
   const cancelRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
@@ -127,6 +137,19 @@ export function ScanRoute() {
     const unsubscribe = useTechnologyStore.getState().watch(scanId);
     return unsubscribe;
   }, [scanId, loadDetections, clearDetections]);
+
+  // Keep the auth panel in sync with the selected project's persisted session
+  // (the database is the source of truth; never a hardcoded "ready").
+  useEffect(() => {
+    void refreshAuth(projectId);
+  }, [projectId, refreshAuth]);
+
+  // A session can only be selected when one actually exists for the project.
+  useEffect(() => {
+    if (authMode === 'session' && authSession === null && !authBusy) {
+      setAuthMode('none');
+    }
+  }, [authMode, authSession, authBusy, setAuthMode]);
 
   const canStart = validation.valid && projectId !== null && !scanning && !mutating;
   const needsProject = validation.valid && projectId === null;
@@ -206,6 +229,91 @@ export function ScanRoute() {
           </div>
         </Panel>
 
+        <Panel
+          title="Authentication"
+          actions={
+            authSession ? (
+              <Badge tone="success">Session ready</Badge>
+            ) : (
+              <Badge tone="neutral">No session</Badge>
+            )
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <fieldset disabled={scanning} className="flex flex-col gap-2">
+              <legend className="sr-only">Authentication mode</legend>
+              <label className="flex items-start gap-2 text-body text-text-secondary">
+                <input
+                  type="radio"
+                  name="auth-mode"
+                  className="mt-0.5 h-3.5 w-3.5 accent-brand"
+                  checked={authMode === 'none'}
+                  onChange={() => setAuthMode('none')}
+                />
+                <span>
+                  <span className="text-text-primary">No authentication</span>
+                  <span className="block text-caption text-text-muted">
+                    Crawl only publicly accessible pages.
+                  </span>
+                </span>
+              </label>
+              <label
+                className={cn(
+                  'flex items-start gap-2 text-body',
+                  authSession ? 'text-text-secondary' : 'text-text-muted opacity-60'
+                )}
+              >
+                <input
+                  type="radio"
+                  name="auth-mode"
+                  className="mt-0.5 h-3.5 w-3.5 accent-brand"
+                  checked={authMode === 'session'}
+                  disabled={!authSession}
+                  onChange={() => setAuthMode('session')}
+                />
+                <span>
+                  <span className="text-text-primary">Use saved session</span>
+                  <span className="block text-caption text-text-muted">
+                    {authSession
+                      ? `Captured for ${authSession.targetDomain} · ${authSession.cookieCount} cookie(s)`
+                      : 'No session captured for this project yet.'}
+                  </span>
+                </span>
+              </label>
+            </fieldset>
+
+            {authSession ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-border-subtle px-3 py-2">
+                <span className="text-caption text-text-muted">
+                  Captured {formatTime(authSession.createdAt)}
+                  {authSession.expiresAt ? ` · expires ${formatTime(authSession.expiresAt)}` : ''}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={scanning || authBusy}
+                  onClick={() => void clearAuth(projectId)}
+                >
+                  {authBusy ? 'Clearing...' : 'Clear saved session'}
+                </Button>
+              </div>
+            ) : null}
+
+            {authError ? (
+              <div role="alert" className="rounded border border-danger/40 bg-danger/10 px-3 py-2">
+                <p className="text-body text-text-primary">{authError.message}</p>
+                <p className="text-caption text-text-muted">{authError.suggestedAction}</p>
+              </div>
+            ) : null}
+
+            <p className="text-caption text-text-muted">
+              Sessions are stored encrypted on this device only and are never sent to any service.
+              The interactive login window used to capture a session is not part of this build, so
+              no new session can be captured yet; existing sessions can be used or cleared.
+            </p>
+          </div>
+        </Panel>
+
         <Panel title="Crawl configuration">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
@@ -258,7 +366,7 @@ export function ScanRoute() {
                 [
                   ['desktop', 'Desktop 1440×900'],
                   ['tablet', 'Tablet 768×1024'],
-                  ['mobile', 'Mobile 375×667'],
+                  ['mobile', 'Mobile 375×667']
                 ] as const
               ).map(([key, label]) => (
                 <label key={key} className="flex items-center gap-2 text-body text-text-secondary">
@@ -289,11 +397,7 @@ export function ScanRoute() {
               </p>
               <div className="flex items-center gap-2">
                 {scanning ? (
-                  <Button
-                    ref={cancelRef}
-                    variant="danger"
-                    onClick={() => void cancelScan()}
-                  >
+                  <Button ref={cancelRef} variant="danger" onClick={() => void cancelScan()}>
                     Cancel scan
                   </Button>
                 ) : null}
@@ -347,7 +451,11 @@ export function ScanRoute() {
               >
                 <div
                   className={`h-full rounded-full transition-[width] duration-200 ${
-                    status === 'failed' ? 'bg-danger' : status === 'cancelled' ? 'bg-warning' : 'bg-brand'
+                    status === 'failed'
+                      ? 'bg-danger'
+                      : status === 'cancelled'
+                        ? 'bg-warning'
+                        : 'bg-brand'
                   }`}
                   style={{ width: `${progress.percentage}%` }}
                 />

@@ -33,10 +33,11 @@ function row(scanId: string, overrides: Partial<UpsertScanTechnologyInput> = {})
 
 describe('migration 003 (technology_detection)', () => {
   it('is registered, applied, and checksum-stable', async () => {
-    expect(MIGRATIONS.map((m) => m.version)).toEqual([1, 2, 3]);
+    // Migration 003 sits third in the ordered registry (later phases append).
+    expect(MIGRATIONS.slice(0, 3).map((m) => m.version)).toEqual([1, 2, 3]);
     const storage = await createTestStorage();
     const applied = readAppliedMigrations(storage.db);
-    expect(applied.map((m) => m.version)).toEqual([1, 2, 3]);
+    expect(applied.map((m) => m.version)).toEqual(MIGRATIONS.map((m) => m.version));
     expect(applied[2]?.name).toBe('technology_detection');
     expect(applied[2]?.checksum).toBe(computeChecksum(MIGRATIONS[2]!.sql));
     await storage.close();
@@ -77,7 +78,9 @@ describe('migration 003 (technology_detection)', () => {
     );
 
     const report = await runMigrations(legacy);
-    expect(report.applied.map((m) => m.version)).toEqual([3]);
+    // Only the migrations not already applied (3 onward) run.
+    const expectedPending = MIGRATIONS.slice(2).map((m) => m.version);
+    expect(report.applied.map((m) => m.version)).toEqual(expectedPending);
 
     const rows = legacy.all<{ name: string; technology_id: string | null }>(
       'SELECT name, technology_id FROM scan_technologies;'

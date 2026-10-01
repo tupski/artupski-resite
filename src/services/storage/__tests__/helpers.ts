@@ -10,6 +10,7 @@ import { runMigrations } from '../migrations';
 import { MemoryStorageFile } from '../persistence/storageFile';
 import { createStorage, type StorageInstance } from '../storageService';
 import type { StorageContext } from '../context';
+import { AuthSessionRepository } from '../repositories/authSessionRepository';
 import { ProjectRepository } from '../repositories/projectRepository';
 import { ScanPageRepository } from '../repositories/scanPageRepository';
 import { ScanRepository } from '../repositories/scanRepository';
@@ -25,6 +26,7 @@ export interface TestStorage {
   scans: ScanRepository;
   pages: ScanPageRepository;
   technologies: TechnologyRepository;
+  authSessions: AuthSessionRepository;
   settings: SettingsRepository;
   /** Export current bytes (as the persisted database would be). */
   exportBytes(): Uint8Array;
@@ -50,6 +52,7 @@ function wrap(instance: StorageInstance, file: MemoryStorageFile): TestStorage {
     scans: new ScanRepository(context),
     pages: new ScanPageRepository(context),
     technologies: new TechnologyRepository(context),
+    authSessions: new AuthSessionRepository(context),
     settings: new SettingsRepository(context),
     exportBytes: () => db.export(),
     reopen: async () => {

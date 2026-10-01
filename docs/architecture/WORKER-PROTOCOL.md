@@ -36,7 +36,7 @@ interface WorkerEnvelope<TType, TPayload> {
 
 | Type | Direction | Purpose |
 | :--- | :--- | :--- |
-| `command` | host → worker | An operation to perform (`ping`, `launch`, `navigate`, `close`). |
+| `command` | host → worker | An operation to perform (`ping`, `launch`, `navigate`, `close`, `extract`, `abort`, `detectLogin`). |
 | `result` | worker → host | The correlated outcome of a command (matched by `id`). May carry `error`. |
 | `event` | worker → host | Asynchronous worker telemetry (e.g. `browser.launched`). |
 | `log` | worker → host | Structured log line (level + message + optional metadata). |

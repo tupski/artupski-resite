@@ -48,6 +48,8 @@ import { CrawlFrontier } from './frontier';
 import { resolveCrawlLimits, type CrawlLimits } from './crawlLimits';
 import { createScannerError, toScannerError } from './errors';
 import { assertTransition } from './lifecycle';
+import { classifyPageAuth } from './authClassifier';
+import type { PageAuthStatus } from '../auth/types';
 import type { ScannerResult } from './scannerWorkerClient';
 import type { NormalizedPage } from './extraction/types';
 
@@ -63,6 +65,17 @@ export interface CrawlRequest {
   sessionId: string;
   limits?: Partial<CrawlLimits>;
   scope?: CrawlScopeOptions;
+  /**
+   * True when the caller injected a captured session into the worker. It drives
+   * auth classification only; it does not itself grant any access.
+   */
+  authenticated?: boolean;
+  /**
+   * When true, the scan is marked `failed` if any page is `auth_required`
+   * (i.e. the session did not hold) even though the crawl otherwise finished.
+   * Callers that did not request authentication leave this false.
+   */
+  requireAuthentication?: boolean;
 }
 
 export interface CrawlResult {
@@ -74,6 +87,10 @@ export interface CrawlResult {
   pagesPersisted: number;
   /** Number of technologies persisted for this scan (Phase 5). */
   technologiesDetected: number;
+  /** Pages classified `auth_required` during this scan (0 for public scans). */
+  pagesAuthRequired: number;
+  /** Pages classified `blocked` (CAPTCHA/WAF) during this scan. */
+  pagesBlocked: number;
   error: StructuredError | null;
 }
 
@@ -91,7 +108,11 @@ export interface CrawlPersistence {
 
 /** Worker port the service depends on (implemented by `ScannerWorkerClient`). */
 export interface CrawlWorker {
-  extract(sessionId: string, url: string, options?: { timeoutMs?: number; maxRedirects?: number }): Promise<ScannerResult<NormalizedPage>>;
+  extract(
+    sessionId: string,
+    url: string,
+    options?: { timeoutMs?: number; maxRedirects?: number }
+  ): Promise<ScannerResult<NormalizedPage>>;
   abort(sessionId: string): Promise<ScannerResult<true>>;
 }
 
@@ -164,7 +185,10 @@ export class CrawlerService {
     // (before the first await) so two near-simultaneous `run()` calls cannot
     // both pass the check and start competing crawls.
     if (this.active) {
-      return this.refuseDuplicate(request.scanId ?? null, 'A crawl is already running in this process.');
+      return this.refuseDuplicate(
+        request.scanId ?? null,
+        'A crawl is already running in this process.'
+      );
     }
     const scanId = request.scanId ?? this.idFactory();
     const run: ActiveRun = { scanId, sessionId: request.sessionId, cancelled: false };
@@ -191,6 +215,9 @@ export class CrawlerService {
     let pagesPersisted = 0;
     let pageFailures = 0;
     let technologiesDetected = 0;
+    let pagesAuthRequired = 0;
+    let pagesBlocked = 0;
+    const authenticated = request.authenticated === true;
     const frontier = new CrawlFrontier({ maxDepth: limits.maxDepth, maxPages: limits.maxPages });
     const batch: UpsertScanPageInput[] = [];
     // Bounded detection evidence accumulated per page. Only the bounded tech
@@ -258,7 +285,7 @@ export class CrawlerService {
         const outcome = await this.extractWithRetry(run, item.url, limits);
 
         // Cancellation wins over whatever the extraction returned.
-        if (run.cancelled || (outcome.error?.code === 'USER_CANCELLED')) {
+        if (run.cancelled || outcome.error?.code === 'USER_CANCELLED') {
           break;
         }
 
@@ -273,17 +300,48 @@ export class CrawlerService {
         const page = outcome.page;
         if (!page) {
           // Defensive: a non-fatal failure without a page is recorded as failed.
-          const error = outcome.error ?? createScannerError('NAVIGATION_ABORTED', { message: 'Extraction produced no page.' });
+          const error =
+            outcome.error ??
+            createScannerError('NAVIGATION_ABORTED', { message: 'Extraction produced no page.' });
           batch.push(this.failureRecord(scanId, item, error));
           pageFailures += 1;
           this.emitPageFailed(scanId, item.url, error);
         } else {
-          batch.push(this.pageRecord(scanId, item.depth, page));
+          // Classify the page against the session that was actually injected.
+          const authStatus = classifyPageAuth({
+            sessionInjected: authenticated,
+            httpStatus: page.httpStatus,
+            signals: page.loginSignals,
+            extractionStatus: page.status
+          });
+          batch.push(this.pageRecord(scanId, item.depth, page, authStatus));
+          if (authStatus === 'auth_required') {
+            pagesAuthRequired += 1;
+          } else if (authStatus === 'blocked') {
+            pagesBlocked += 1;
+          }
+
           if (page.status === 'completed') {
-            this.emitPageLoaded(scanId, item.url, page, item.depth);
-            this.enqueueLinks(frontier, scope, page, item.depth, scanId);
-            if (page.tech) {
-              detectionInputs.push({ url: page.finalUrl || page.requestedUrl, tech: page.tech });
+            // Only a genuinely accessible page is treated as loaded: an
+            // auth-walled page is NOT a successful authenticated result and its
+            // links are not enqueued as if it were protected content.
+            if (authStatus === 'public' || authStatus === 'authenticated') {
+              this.emitPageLoaded(scanId, item.url, page, item.depth);
+              this.enqueueLinks(frontier, scope, page, item.depth, scanId);
+              if (page.tech) {
+                detectionInputs.push({ url: page.finalUrl || page.requestedUrl, tech: page.tech });
+              }
+            } else {
+              this.emitPageFailed(
+                scanId,
+                item.url,
+                createScannerError('NAVIGATION_ABORTED', {
+                  message:
+                    authStatus === 'blocked'
+                      ? 'The page returned a CAPTCHA/WAF challenge.'
+                      : 'The page required authentication that was not satisfied.'
+                })
+              );
             }
           } else {
             pageFailures += 1;
@@ -326,11 +384,7 @@ export class CrawlerService {
       // persisted. A fatal crawl failure skips detection (the scan is `failed`);
       // a cancelled crawl still persists the partial detections it collected.
       if (!fatalError) {
-        technologiesDetected = await this.runDetection(
-          scanId,
-          request.projectId,
-          detectionInputs
-        );
+        technologiesDetected = await this.runDetection(scanId, request.projectId, detectionInputs);
       }
 
       if (run.cancelled) {
@@ -352,7 +406,9 @@ export class CrawlerService {
           pageFailures,
           pagesPersisted,
           null,
-          technologiesDetected
+          technologiesDetected,
+          pagesAuthRequired,
+          pagesBlocked
         );
       }
 
@@ -368,7 +424,54 @@ export class CrawlerService {
           })
         );
         this.log.error('Crawl failed', fatalError, { scanId });
-        return this.result(scanId, 'failed', stats.scanned, stats.discovered, pageFailures, pagesPersisted, fatalError);
+        return this.result(
+          scanId,
+          'failed',
+          stats.scanned,
+          stats.discovered,
+          pageFailures,
+          pagesPersisted,
+          fatalError,
+          technologiesDetected,
+          pagesAuthRequired,
+          pagesBlocked
+        );
+      }
+
+      // The caller required authentication and it did not hold: the crawl MUST
+      // NOT be reported as a successful authenticated scan. The scan is failed
+      // with an explicit session/problem classification, never `completed`.
+      if (request.requireAuthentication && pagesAuthRequired > 0) {
+        const authError = createScannerError('NAVIGATION_ABORTED', {
+          message: `Authentication was required but not satisfied on ${pagesAuthRequired} page(s).`,
+          details: { pagesAuthRequired, pagesBlocked }
+        });
+        await this.transition(scanId, 'in_progress', 'failed', JSON.stringify(authError));
+        this.events.emit(
+          createEvent('scanner.failed', {
+            scanId,
+            projectId: request.projectId,
+            url: seed,
+            code: authError.code,
+            message: authError.message
+          })
+        );
+        this.log.warn('Authenticated crawl failed: session did not hold', {
+          scanId,
+          pagesAuthRequired
+        });
+        return this.result(
+          scanId,
+          'failed',
+          stats.scanned,
+          stats.discovered,
+          pageFailures,
+          pagesPersisted,
+          authError,
+          technologiesDetected,
+          pagesAuthRequired,
+          pagesBlocked
+        );
       }
 
       await this.transition(scanId, 'in_progress', 'completed');
@@ -389,14 +492,19 @@ export class CrawlerService {
         pageFailures,
         pagesPersisted,
         null,
-        technologiesDetected
+        technologiesDetected,
+        pagesAuthRequired,
+        pagesBlocked
       );
     } catch (error) {
       const structured = toScannerError(error);
       this.log.error('Crawl aborted by an unexpected error', structured, { scanId });
       try {
         await flush();
-        await this.persistence.updateStatus(scanId, { status: 'failed', errorDetails: JSON.stringify(structured) });
+        await this.persistence.updateStatus(scanId, {
+          status: 'failed',
+          errorDetails: JSON.stringify(structured)
+        });
         this.events.emit(
           createEvent('scanner.failed', {
             scanId,
@@ -407,10 +515,23 @@ export class CrawlerService {
           })
         );
       } catch (persistError) {
-        this.log.error('Failed to record the terminal scan state', toScannerError(persistError), { scanId });
+        this.log.error('Failed to record the terminal scan state', toScannerError(persistError), {
+          scanId
+        });
       }
       const stats = frontier.getStats();
-      return this.result(scanId, 'failed', stats.scanned, stats.discovered, pageFailures, pagesPersisted, structured);
+      return this.result(
+        scanId,
+        'failed',
+        stats.scanned,
+        stats.discovered,
+        pageFailures,
+        pagesPersisted,
+        structured,
+        technologiesDetected,
+        pagesAuthRequired,
+        pagesBlocked
+      );
     } finally {
       // Cleanup: always release the active slot so the next crawl can start.
       this.active = null;
@@ -505,7 +626,10 @@ export class CrawlerService {
     errorDetails?: string
   ): Promise<void> {
     assertTransition(from, to);
-    await this.persistence.updateStatus(scanId, { status: to, ...(errorDetails ? { errorDetails } : {}) });
+    await this.persistence.updateStatus(scanId, {
+      status: to,
+      ...(errorDetails ? { errorDetails } : {})
+    });
   }
 
   /**
@@ -586,7 +710,12 @@ export class CrawlerService {
     return persisted;
   }
 
-  private pageRecord(scanId: string, depth: number, page: NormalizedPage): UpsertScanPageInput {
+  private pageRecord(
+    scanId: string,
+    depth: number,
+    page: NormalizedPage,
+    authStatus: PageAuthStatus
+  ): UpsertScanPageInput {
     return {
       scanId,
       url: page.requestedUrl,
@@ -599,6 +728,7 @@ export class CrawlerService {
       canonicalUrl: page.canonicalUrl,
       robotsMeta: page.robotsMeta,
       status: page.status,
+      authStatus,
       errorCode: page.errorCode,
       errorMessage: page.errorMessage,
       loadTimeMs: page.metrics.loadTimeMs,
@@ -630,6 +760,7 @@ export class CrawlerService {
       canonicalUrl: null,
       robotsMeta: null,
       status: 'failed',
+      authStatus: null,
       errorCode: error.code,
       errorMessage: error.message,
       loadTimeMs: null,
@@ -710,7 +841,9 @@ export class CrawlerService {
     pageFailures: number,
     pagesPersisted: number,
     error: StructuredError | null,
-    technologiesDetected = 0
+    technologiesDetected = 0,
+    pagesAuthRequired = 0,
+    pagesBlocked = 0
   ): CrawlResult {
     return {
       scanId,
@@ -720,6 +853,8 @@ export class CrawlerService {
       pageFailures,
       pagesPersisted,
       technologiesDetected,
+      pagesAuthRequired,
+      pagesBlocked,
       error
     };
   }

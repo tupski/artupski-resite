@@ -17,7 +17,12 @@ import type { StorageContext } from './context';
 import { SqliteDatabase } from './driver/database';
 import { createStorageError } from './errors';
 import { runMigrations } from './migrations';
-import { createDefaultStorageFile, createMemoryStorageFile, type StorageFile } from './persistence/storageFile';
+import {
+  createDefaultStorageFile,
+  createMemoryStorageFile,
+  type StorageFile
+} from './persistence/storageFile';
+import { AuthSessionRepository } from './repositories/authSessionRepository';
 import { ProjectRepository } from './repositories/projectRepository';
 import { ScanPageRepository } from './repositories/scanPageRepository';
 import { ScanRepository } from './repositories/scanRepository';
@@ -31,6 +36,7 @@ export interface StorageRepositories {
   scans: ScanRepository;
   pages: ScanPageRepository;
   technologies: TechnologyRepository;
+  authSessions: AuthSessionRepository;
   settings: SettingsRepository;
 }
 
@@ -56,6 +62,7 @@ function buildRepositories(context: StorageContext): StorageRepositories {
     scans: new ScanRepository(context),
     pages: new ScanPageRepository(context),
     technologies: new TechnologyRepository(context),
+    authSessions: new AuthSessionRepository(context),
     settings: new SettingsRepository(context)
   };
 }
@@ -79,7 +86,8 @@ export async function createStorage(
   };
 
   const migrationResult = await runMigrations(database, {
-    onApply: (migration) => hooks.onMigrationStart?.({ version: migration.version, name: migration.name }),
+    onApply: (migration) =>
+      hooks.onMigrationStart?.({ version: migration.version, name: migration.name }),
     // Migrations mutate the schema outside a repository, so persist them here.
     onApplied: async () => {
       await persistDatabase();

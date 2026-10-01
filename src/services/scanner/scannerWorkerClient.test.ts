@@ -17,6 +17,8 @@ function samplePage(): NormalizedPage {
     externalLinks: [],
     images: [],
     metrics: { loadTimeMs: 1, domContentLoadedTimeMs: 1, domNodeCount: 1 },
+    authStatus: 'public',
+    loginSignals: { redirectedToLogin: false, hasPasswordField: false, hasCaptcha: false },
     status: 'completed',
     errorCode: null,
     errorMessage: null,

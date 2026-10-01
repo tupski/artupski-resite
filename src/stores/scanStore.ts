@@ -10,6 +10,7 @@
 import { create } from 'zustand';
 import { eventBus, type AppEvent } from '../services/infra/eventBus';
 import { runScan, cancelScan } from '../services/scanner/scanService';
+import { useAuthStore } from './authStore';
 import type { ScanLogEntry, ScanLogLevel, ScanProgress, ScanStatus } from '../types/scan';
 
 /** Sliding window keeps memory bounded for the live console. */
@@ -33,7 +34,7 @@ const EMPTY_PROGRESS: ScanProgress = {
   pagesScanned: 0,
   pagesDiscovered: 0,
   percentage: 0,
-  currentUrl: null,
+  currentUrl: null
 };
 
 export interface ScanState {
@@ -67,8 +68,8 @@ export const DEFAULT_SCAN_CONFIGURATION: ScanConfiguration = {
   viewports: {
     desktop: true,
     tablet: false,
-    mobile: false,
-  },
+    mobile: false
+  }
 };
 
 function createId(): string {
@@ -107,17 +108,17 @@ export const useScanStore = create<ScanState>((set, get) => ({
         ...patch,
         viewports: {
           ...state.configuration.viewports,
-          ...(patch.viewports ?? {}),
-        },
-      },
+          ...(patch.viewports ?? {})
+        }
+      }
     })),
 
   appendLog: (level, message) =>
     set((state) => ({
       logs: [
         ...state.logs.slice(-(MAX_LOG_ENTRIES - 1)),
-        { id: createId(), timestamp: new Date().toISOString(), level, message },
-      ],
+        { id: createId(), timestamp: new Date().toISOString(), level, message }
+      ]
     })),
 
   startScan: async () => {
@@ -131,8 +132,8 @@ export const useScanStore = create<ScanState>((set, get) => ({
         error: {
           code: 'INVALID_URL',
           message: 'Select or create a project for this target before scanning.',
-          suggestedAction: 'Open the Projects view, create a project for this URL, then scan it.',
-        },
+          suggestedAction: 'Open the Projects view, create a project for this URL, then scan it.'
+        }
       });
       return;
     }
@@ -145,9 +146,16 @@ export const useScanStore = create<ScanState>((set, get) => ({
       error: null,
       logs: [],
       discoveredPages: [],
-      progress: { ...EMPTY_PROGRESS },
+      progress: { ...EMPTY_PROGRESS }
     });
     get().appendLog('info', `Starting crawl of ${targetUrl}`);
+
+    // Whether the user chose to scan with a captured session. The service
+    // re-loads and injects the session (or fails cleanly if it is gone).
+    const authenticated = useAuthStore.getState().mode === 'session';
+    if (authenticated) {
+      get().appendLog('info', 'Authenticated scan: injecting the stored session.');
+    }
 
     try {
       const result = await runScan({
@@ -156,6 +164,7 @@ export const useScanStore = create<ScanState>((set, get) => ({
         seedUrl: targetUrl,
         limits: { maxDepth: configuration.maxDepth, maxPages: configuration.maxPages },
         headless: configuration.headless,
+        authenticated
       });
 
       if (!result.ok) {
@@ -167,6 +176,16 @@ export const useScanStore = create<ScanState>((set, get) => ({
       }
 
       const outcome = result.data;
+      // A failed authenticated scan is only "authenticated" factually: report
+      // the auth-specific outcome distinctly. Never present an auth-walled or
+      // blocked page as a successful authenticated result.
+      if (outcome.pagesAuthRequired > 0 || outcome.pagesBlocked > 0) {
+        get().appendLog(
+          'warn',
+          `Auth classification: ${outcome.pagesAuthRequired} page(s) required authentication, ` +
+            `${outcome.pagesBlocked} page(s) blocked.`
+        );
+      }
       set((state) => ({
         status: outcome.status,
         error: outcome.error ? toUiError(outcome.error) : null,
@@ -174,16 +193,17 @@ export const useScanStore = create<ScanState>((set, get) => ({
           pagesScanned: outcome.pagesScanned,
           pagesDiscovered: outcome.pagesDiscovered,
           percentage: outcome.status === 'completed' ? 100 : state.progress.percentage,
-          currentUrl: null,
-        },
+          currentUrl: null
+        }
       }));
+      const authSuffix = outcome.authenticated ? ' (authenticated)' : '';
       const summary =
         outcome.status === 'completed'
-          ? `Crawl complete: ${outcome.pagesScanned} page(s) scanned` +
+          ? `Crawl complete${authSuffix}: ${outcome.pagesScanned} page(s) scanned` +
             (outcome.pageFailures > 0 ? `, ${outcome.pageFailures} failed` : '')
           : outcome.status === 'cancelled'
             ? `Crawl cancelled after ${outcome.pagesScanned} page(s)`
-            : `Crawl failed: ${outcome.error?.message ?? 'unknown error'}`;
+            : `Crawl failed${authSuffix}: ${outcome.error?.message ?? 'unknown error'}`;
       get().appendLog(outcome.status === 'failed' ? 'error' : 'info', summary);
     } finally {
       unsubscribers();
@@ -206,8 +226,8 @@ export const useScanStore = create<ScanState>((set, get) => ({
       progress: EMPTY_PROGRESS,
       logs: [],
       discoveredPages: [],
-      error: null,
-    }),
+      error: null
+    })
 }));
 
 function toUiError(error: { code: string; message: string; suggestedAction: string }) {
@@ -233,7 +253,7 @@ function subscribeToScan(
       if (!matches(event)) return;
       const payload = event.payload as { url: string };
       set((state) => ({
-        discoveredPages: [...state.discoveredPages.slice(-(MAX_DISCOVERED - 1)), payload.url],
+        discoveredPages: [...state.discoveredPages.slice(-(MAX_DISCOVERED - 1)), payload.url]
       }));
     }),
 
@@ -269,8 +289,8 @@ function subscribeToScan(
           pagesScanned: payload.pagesScanned,
           pagesDiscovered: payload.pagesDiscovered,
           percentage: payload.progressPercentage,
-          currentUrl: payload.currentUrl,
-        },
+          currentUrl: payload.currentUrl
+        }
       });
     }),
 
@@ -278,7 +298,7 @@ function subscribeToScan(
       if (!matches(event)) return;
       const payload = event.payload as { code: string; message: string };
       get().appendLog('error', `Crawl failed: ${payload.message} (${payload.code})`);
-    }),
+    })
   ];
 
   return () => {

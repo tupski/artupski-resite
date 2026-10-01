@@ -32,6 +32,8 @@ function page(url: string, overrides: Partial<NormalizedPage> = {}): NormalizedP
     images: [],
     metrics: { loadTimeMs: 5, domContentLoadedTimeMs: 3, domNodeCount: 10 },
     tech: createEmptyTechEvidence(),
+    authStatus: 'public',
+    loginSignals: { redirectedToLogin: false, hasPasswordField: false, hasCaptcha: false },
     status: 'completed',
     errorCode: null,
     errorMessage: null,

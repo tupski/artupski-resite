@@ -162,6 +162,23 @@ This final Phase 4 workstream wires the UI to the crawler, fixes the opt-in test
 - **Potential Risks**: Token expiration and session invalidation during multi-page scans.
 - **Verification**: Scan authenticated dashboard view; verify authenticated DOM is captured.
 
+### Roadmap numbering reconciliation (as built)
+
+The delivered work does **not** follow the numeric order of the phase headings above. Technology Detection (below, headed "Phase 6") was implemented and committed **before** Authentication & Session Scanning (headed "Phase 5"), as `2191b29 feat: implement technology detection`. The phase *numbers* are unchanged (Technology Detection remains "Phase 6" and Authentication remains "Phase 5"); only the delivery order differs. This note records the discrepancy rather than silently renumbering unrelated phases.
+
+### Phase 5 Implementation Notes (as built)
+
+The phase is delivered as a **cryptographically-bounded session core** that reuses the existing Phase 3 browser infrastructure and Phase 4 crawler. No second process manager, browser runtime, or crawler was created; the worker protocol was extended additively.
+
+1. **Scope delivered**: session data model, AES-256-GCM encryption at rest, persistence, injection of a captured `storageState` into an isolated browser context, auth-wall detection/classification, session lifecycle/cleanup, and honest UI state. See `AUTH-SCANNING.md` section 4 and `SECURITY.md` section 3 for the authoritative model.
+2. **Documented deviation - interactive capture window**: `AUTH-SCANNING.md` section 2.1 specifies a **headed** interactive browser window where the user completes login/MFA/SSO, followed by a "Capture Session" action. Phase 3's worker only ever launches headless and the spec forbids replacing that flow with credential automation. This build therefore **defers the interactive capture window** and the credential-entry UX; everything downstream of capture (encryption, storage, injection, classification, cleanup, UI status/clear) is implemented and tested. The UI states this limitation plainly. The `detectLogin` worker command (a pure presence probe, no data extraction) is provided so a future capture flow can verify a session; it is not a credential-entry surface.
+3. **Crypto (documented reconciliation)**: `AUTH-SCANNING.md` section 4.1 names Argon2id while `SECURITY.md` section 3.1 names PBKDF2 (100k, SHA-512). The two spec sections disagree; PBKDF2-HMAC-SHA512 via Web Crypto is implemented (available in both the Tauri webview and Vitest, no new dependency). The installation seed is a random per-install value in `app_settings` (no OS keychain integration yet) and must not be presented as hardware-backed.
+4. **Browser & isolation**: every worker session gets its own explicit Playwright context. A captured session is applied in-memory (`browser.newContext({ storageState })`), is never written to disk, and a plain launch can never inherit it. On `close`/shutdown the context is closed first (dropping all injected cookies/storage); no profile folder is written.
+5. **Crawler integration**: `CrawlerService` classifies every page against the injected session (`public` / `authenticated` / `auth_required` / `blocked` / `unknown`, `src/services/scanner/authClassifier.ts`). An auth-walled page is **never** counted as a completed/authenticated result: its links are not enqueued and, when the caller required authentication, the scan is recorded `failed` (never `completed`). The `scan_pages.auth_status` column (migration 005) persists the classification.
+6. **Persistence**: forward-only migrations `004_auth_sessions.ts` (version 4, `auth_sessions` with a partial UNIQUE index enforcing one active session per project) and `005_scan_page_auth.ts` (version 5, `scan_pages.auth_status`). `001`-`003` are untouched. Secrets live only inside the ciphertext; `scan_pages` never holds cookie values.
+7. **UI**: `ScanRoute` gains an Authentication panel (mode selection, honest session-ready badge, capture-time/expiry, safe clear) backed by `src/stores/authStore.ts`. No secrets are rendered; a session can only be selected when the persisted metadata says one exists.
+8. **Deferred**: the interactive capture window + credential entry; OS-keychain-backed key derivation; session verification via a pre-scan `detectLogin` round-trip in the UI; screenshots/assets/HAR (unchanged from Phase 4).
+
 ---
 
 ## Phase 6: Technology & Library Detection Engine
