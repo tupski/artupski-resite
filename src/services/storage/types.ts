@@ -21,7 +21,8 @@ import type {
   ScanPageImage,
   ScanPageStatus,
   ScanStatus,
-  ScanTechnology
+  ScanTechnology,
+  ScanTechnologyEvidence
 } from '../../types/models';
 
 export type SqlPrimitive = string | number | Uint8Array | null;
@@ -81,15 +82,21 @@ export interface ScanPageRow {
   created_at: string;
 }
 
-/** Raw `scan_technologies` row shape as returned by sql.js. */
+/** Raw `scan_technologies` row shape as returned by sql.js (migration 003 adds columns). */
 export interface ScanTechnologyRow {
   id: string;
   scan_id: string;
+  technology_id: string | null;
   category: string;
   name: string;
   version: string | null;
+  confidence_status: string | null;
   confidence: number;
+  version_status: string | null;
   detection_source: string;
+  evidence: string | null;
+  pages: string | null;
+  limitation: string | null;
   metadata: string | null;
   created_at: string;
 }
@@ -184,11 +191,17 @@ export function toScanTechnology(row: ScanTechnologyRow): ScanTechnology {
   return {
     id: row.id,
     scanId: row.scan_id,
+    technologyId: row.technology_id,
     category: row.category,
     name: row.name,
     version: row.version,
+    confidenceStatus: row.confidence_status,
     confidence: row.confidence,
+    versionStatus: row.version_status,
     detectionSource: row.detection_source,
+    evidence: parseJsonArray<ScanTechnologyEvidence>(row.evidence),
+    pages: parseJsonArray<string>(row.pages),
+    limitation: row.limitation,
     metadata: row.metadata,
     createdAt: row.created_at
   };
@@ -273,4 +286,20 @@ export interface CreateScanTechnologyInput {
   detectionSource: string;
   version?: string | null;
   metadata?: string | null;
+}
+
+/** A Phase 5 detection result ready to persist (upsert key: scanId+technologyId). */
+export interface UpsertScanTechnologyInput {
+  scanId: string;
+  technologyId: string;
+  category: string;
+  name: string;
+  version: string | null;
+  confidence: number;
+  confidenceStatus: string;
+  versionStatus: string;
+  detectionSource: string;
+  evidence: ScanTechnologyEvidence[];
+  pages: string[];
+  limitation: string | null;
 }

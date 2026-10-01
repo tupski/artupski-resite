@@ -64,6 +64,42 @@ describe('in-page extractor', () => {
     expect(result.warnings).toContain('missing_title');
     expect(result.warnings).toContain('missing_headings');
   });
+
+  it('captures bounded Phase 5 evidence without executing page scripts', () => {
+    document.head.innerHTML = `
+      <meta name="generator" content="WordPress 6.4.2" />
+      <meta name="next-head-count" content="3" />
+      <script src="/_next/static/main.js"></script>
+    `;
+    document.body.innerHTML = `
+      <div id="__next" data-reactroot="" class="flex min-h-screen"></div>
+      <astro-island></astro-island>
+      <script src="/app.js"></script>
+    `;
+
+    const result = runExtractorInDom() as {
+      tech: {
+        scriptSrcs: string[];
+        metaTags: Record<string, string>;
+        domMarkers: string[];
+        jsGlobals: Record<string, boolean>;
+        htmlSnippet: string;
+        cookieNames: string[];
+      };
+    };
+
+    expect(result.tech.scriptSrcs).toContain('/_next/static/main.js');
+    expect(result.tech.scriptSrcs).toContain('/app.js');
+    expect(result.tech.metaTags.generator).toBe('WordPress 6.4.2');
+    expect(result.tech.metaTags['next-head-count']).toBe('3');
+    expect(result.tech.domMarkers).toContain('#__next');
+    expect(result.tech.domMarkers).toContain('[data-reactroot]');
+    expect(result.tech.domMarkers).toContain('astro-island');
+    // Only boolean presence probes are recorded - never values.
+    expect(typeof result.tech.jsGlobals.React).toBe('boolean');
+    // The structural snippet contains the markup but no scripts are run.
+    expect(result.tech.htmlSnippet).toContain('id="__next"');
+  });
 });
 
 describe('extractPageEvidence coercion', () => {
@@ -92,5 +128,27 @@ describe('extractPageEvidence coercion', () => {
     expect(evidence.metrics.loadTimeMs).toBe(0);
     expect(evidence.metrics.domNodeCount).toBe(1);
     expect(evidence.warnings).toEqual(['w']);
+  });
+
+  it('merges worker-side headers and retains only cookie NAMES', async () => {
+    const page: ExtractablePage = {
+      evaluate<T>(): Promise<T> {
+        return Promise.resolve({ tech: { cookieNames: ['theme'] } } as unknown as T);
+      }
+    };
+    const evidence = await extractPageEvidence(page, {
+      requestedUrl: 'https://example.com/',
+      finalUrl: 'https://example.com/',
+      httpStatus: 200,
+      responseHeaders: { Server: 'cloudflare', 'CF-Ray': 'abc' },
+      setCookieHeaders: ['session=SECRET; Path=/; HttpOnly', 'PHPSESSID=abc123']
+    });
+
+    expect(evidence.tech.responseHeaders.server).toBe('cloudflare');
+    expect(evidence.tech.responseHeaders['cf-ray']).toBe('abc');
+    // Only names are kept - the secret cookie value never reaches evidence.
+    expect(evidence.tech.cookieNames).toEqual(expect.arrayContaining(['theme', 'session', 'PHPSESSID']));
+    expect(JSON.stringify(evidence.tech)).not.toContain('SECRET');
+    expect(JSON.stringify(evidence.tech)).not.toContain('abc123');
   });
 });

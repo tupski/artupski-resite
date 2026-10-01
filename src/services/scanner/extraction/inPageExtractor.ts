@@ -26,6 +26,31 @@ function ${PAGE_EXTRACTOR_FUNCTION_NAME}() {
   var MAX_LINKS = 800;
   var MAX_IMAGES = 500;
   var MAX_TEXT = 4000;
+  var MAX_SCRIPT_SRCS = 200;
+  var MAX_META_TAGS = 64;
+  var MAX_META_VALUE = 512;
+  var MAX_DOM_MARKERS = 100;
+  var MAX_HTML_SNIPPET = 8192;
+  var MAX_BODY_SNIPPET = 2048;
+
+  // Known custom-element / distinctive markers that identify an engine. Probed
+  // by selector only - nothing is executed and no page script is invoked.
+  var DOM_MARKER_SELECTORS = [
+    'astro-island', 'astro-slot', 'next-route-announcer', '__next', '#__next',
+    'nuxt-link', '#__nuxt', '[data-nuxt]', '[data-reactroot]', '[data-reactid]',
+    'gatsby-image', '[data-gatsby]', '#__gatsby', '[data-svelte]', '[data-solid]',
+    '#app[data-v-app]', '[data-v-]', 'shopify-section', '[data-shopify]',
+    'stencil-component', 'ion-app', '[data-wf-page]', '[data-wf-site]',
+    'turbo-frame', '[data-turbo]', '[data-hydrate]'
+  ];
+
+  // Well-known JS global presence probes. Only the BOOLEAN presence is recorded;
+  // no value is read or returned, so no site code is evaluated.
+  var JS_GLOBAL_PROBES = [
+    '__NEXT_DATA__', '__NUXT__', '__remixContext', '__svelte', '__solid',
+    '__GATSBY', 'React', 'Vue', 'angular', 'Alpine', 'jQuery', 'Swiper',
+    'gsap', 'Chart', 'd3', '_'
+  ];
 
   function textOf(el) {
     if (!el) return '';
@@ -74,6 +99,57 @@ function ${PAGE_EXTRACTOR_FUNCTION_NAME}() {
   var canonicalEl = document.querySelector('link[rel="canonical"]');
   var canonicalUrl = canonicalEl ? canonicalEl.getAttribute('href') : null;
 
+  var scriptSrcs = [];
+  var scriptEls = document.querySelectorAll('script[src]');
+  for (var s = 0; s < scriptEls.length && scriptSrcs.length < MAX_SCRIPT_SRCS; s++) {
+    var scriptSrc = scriptEls[s].getAttribute('src');
+    if (scriptSrc && scriptSrc.length > 0) scriptSrcs.push(scriptSrc);
+  }
+
+  var metaTags = {};
+  var metaCount = 0;
+  var metaEls = document.querySelectorAll('meta');
+  for (var m = 0; m < metaEls.length && metaCount < MAX_META_TAGS; m++) {
+    var metaEl = metaEls[m];
+    var metaKey = metaEl.getAttribute('name') || metaEl.getAttribute('property') || metaEl.getAttribute('http-equiv');
+    if (!metaKey) continue;
+    var metaValue = metaEl.getAttribute('content');
+    if (metaValue === null) continue;
+    var key = metaKey.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(metaTags, key)) continue;
+    metaTags[key] = metaValue.length > MAX_META_VALUE ? metaValue.slice(0, MAX_META_VALUE) : metaValue;
+    metaCount++;
+  }
+
+  var domMarkers = [];
+  for (var d = 0; d < DOM_MARKER_SELECTORS.length && domMarkers.length < MAX_DOM_MARKERS; d++) {
+    var selector = DOM_MARKER_SELECTORS[d];
+    try {
+      if (document.querySelector(selector)) domMarkers.push(selector);
+    } catch (e) {
+      // An invalid selector must never break extraction.
+    }
+  }
+
+  var jsGlobals = {};
+  for (var g = 0; g < JS_GLOBAL_PROBES.length; g++) {
+    var globalName = JS_GLOBAL_PROBES[g];
+    try {
+      jsGlobals[globalName] = typeof window[globalName] !== 'undefined' && window[globalName] !== null;
+    } catch (e) {
+      jsGlobals[globalName] = false;
+    }
+  }
+
+  // Structural signature only: <head> plus the opening of <body> (enough for
+  // id="__next"/data-reactroot style markers). Body text is not targeted and the
+  // whole snippet is length-capped.
+  var headHtml = document.head ? document.head.innerHTML : '';
+  var bodyHtml = document.body ? document.body.innerHTML : '';
+  if (bodyHtml.length > MAX_BODY_SNIPPET) bodyHtml = bodyHtml.slice(0, MAX_BODY_SNIPPET);
+  var htmlSnippet = headHtml + bodyHtml;
+  if (htmlSnippet.length > MAX_HTML_SNIPPET) htmlSnippet = htmlSnippet.slice(0, MAX_HTML_SNIPPET);
+
   var domNodeCount = document.querySelectorAll('*').length;
 
   var loadTimeMs = 0;
@@ -102,6 +178,17 @@ function ${PAGE_EXTRACTOR_FUNCTION_NAME}() {
       loadTimeMs: loadTimeMs,
       domContentLoadedTimeMs: domContentLoadedTimeMs,
       domNodeCount: domNodeCount
+    },
+    tech: {
+      // Response headers and cookies are captured worker-side (they live on the
+      // Playwright response, not in the DOM); seeds here keep the shape stable.
+      responseHeaders: {},
+      cookieNames: [],
+      scriptSrcs: scriptSrcs,
+      metaTags: metaTags,
+      domMarkers: domMarkers,
+      jsGlobals: jsGlobals,
+      htmlSnippet: htmlSnippet
     },
     warnings: warnings
   };

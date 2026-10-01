@@ -249,6 +249,33 @@ export interface ScannerFailedPayload extends BaseEventPayload {
   message: string;
 }
 
+/** Technology detection payloads (Phase 5). */
+export interface TechnologyScanStartedPayload extends BaseEventPayload {
+  domain: 'technology';
+  scanId: string;
+  pagesConsidered: number;
+}
+
+export interface TechnologyDetectedPayload extends BaseEventPayload {
+  domain: 'technology';
+  scanId: string;
+  technologyId: string;
+  name: string;
+  category: string;
+  confidence: number;
+  confidenceStatus: string;
+  version: string | null;
+}
+
+export interface TechnologyScanCompletedPayload extends BaseEventPayload {
+  domain: 'technology';
+  scanId: string;
+  detectedCount: number;
+  pagesWithEvidence: number;
+  /** True when the caller should warn that capture was incomplete. */
+  partial: boolean;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
@@ -279,6 +306,9 @@ export interface AppEventPayloadMap {
   'scanner.cancelled': ScannerCancelledPayload;
   'scanner.completed': ScannerCompletedPayload;
   'scanner.failed': ScannerFailedPayload;
+  'technology.scan_started': TechnologyScanStartedPayload;
+  'technology.detected': TechnologyDetectedPayload;
+  'technology.scan_completed': TechnologyScanCompletedPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;

@@ -24,7 +24,23 @@ export const EXTRACTION_LIMITS = {
   /** Maximum characters per image alt text. */
   maxAltTextLength: 512,
   /** Maximum warning strings retained. */
-  maxWarnings: 50
+  maxWarnings: 50,
+  /** Maximum characters retained for any single response header value. */
+  maxHeaderValueLength: 512,
+  /** Maximum response headers retained (technology-relevant subset). */
+  maxResponseHeaders: 64,
+  /** Maximum cookie names retained (values are never kept). */
+  maxCookieNames: 100,
+  /** Maximum script `src` URLs retained. */
+  maxScriptSrcs: 200,
+  /** Maximum `<meta>` tag entries retained. */
+  maxMetaTags: 64,
+  /** Maximum characters retained for a meta tag content value. */
+  maxMetaValueLength: 512,
+  /** Maximum distinctive DOM marker names retained. */
+  maxDomMarkers: 100,
+  /** Maximum characters retained for the structural HTML signature snippet. */
+  maxHtmlSnippetLength: 8192
 } as const;
 
 /** Trim a string to a maximum length, returning null for empty results. */

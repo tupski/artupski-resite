@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeExtraction, buildUnavailablePage } from './normalize';
 import { EXTRACTION_LIMITS } from './limits';
 import { createCrawlScope } from '../crawlScope';
-import type { PageExtraction } from './types';
+import { createEmptyTechEvidence, type PageExtraction } from './types';
 
 const scope = createCrawlScope('https://example.com/')!;
 
@@ -19,6 +19,7 @@ function rawEvidence(overrides: Partial<PageExtraction> = {}): PageExtraction {
     links: [],
     images: [],
     metrics: { loadTimeMs: 12, domContentLoadedTimeMs: 8, domNodeCount: 42 },
+    tech: createEmptyTechEvidence(),
     warnings: [],
     ...overrides
   };

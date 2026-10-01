@@ -21,11 +21,15 @@ Artupski ReSite enforces a rigorous multi-tier testing strategy ensuring determi
 Unit tests execute in isolation using Vitest. Target 95%+ coverage on deterministic pure functions.
 
 ### 2.1 Technology Detection & Fingerprinting
-- Path: `src/services/scanner/__tests__/techDetector.test.ts`
+- Path: `src/services/detector/__tests__/engine.test.ts` (as built; supersedes the illustrative `scanner/__tests__/techDetector.test.ts` path).
 - Tests:
-  - Regex signature verification against raw HTML/header/script mock inputs.
-  - Multi-version extraction accuracy (e.g., Next.js `14.2.1`, Tailwind `3.4.0`).
-  - Edge cases: Malformed HTML, missing meta tags, obscured build hashes.
+  - Confidence model (`1 - ∏(1 - w_i)`) and threshold classification.
+  - Version extraction (exact / major-only / unavailable) and implausible-capture rejection.
+  - Known positive signatures across categories; negative cases; false-positive-prone single-signal matches never presented as confirmed.
+  - Ambiguous evidence kept as distinct technologies (no forced single identification).
+  - Deduplication of repeated signals, cross-page union, and deterministic output.
+  - Oversized/malformed/empty evidence handled safely; multiple technologies from one page.
+- Fixtures: deterministic, inline, browser-free (no public websites).
 
 ### 2.2 Blueprint Zod Schema Validation
 - Path: `src/services/blueprint/__tests__/schemaValidator.test.ts`

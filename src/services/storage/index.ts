@@ -61,5 +61,6 @@ export type {
   CreateScanInput,
   CreateScanTechnologyInput,
   UpdateProjectInput,
-  UpsertScanPageInput
+  UpsertScanPageInput,
+  UpsertScanTechnologyInput
 } from './types';

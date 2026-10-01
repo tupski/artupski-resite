@@ -532,3 +532,12 @@ Every navigation boundary the architecture can observe is validated by `src/serv
 - Sections 1, 5, and 6 describe the eventual DOM/CSS/JS/network/asset/screenshot pipeline and anti-bot evasion; Phase 4 implements only the crawl + metadata extraction subset above.
 - Multi-viewport capture (section 4.2 `viewportProfiles`) is **not** honored; the UI exposes the viewport controls as disabled/deferred.
 - Authentication (`authStorageStatePath`) and screenshots/HAR are later phases.
+
+### 7.6 Phase 5 extension - technology-detection evidence
+Technology detection (`docs/specs/TECHNOLOGY-DETECTION.md`) runs over evidence the crawler already collects. Because Phase 4 persisted page metadata/structure only, the extraction contract was extended with a bounded `PageTechEvidence` record carried on each normalized page:
+- **Response headers** (lower-cased names + values, capped) - captured worker-side from the Playwright response.
+- **Cookie names only** - derived from `set-cookie`; values are never retained.
+- **Script `src` URLs**, **technology-relevant `<meta>` tags**, **distinctive DOM markers**, and **boolean JS-global presence probes** - captured in the in-page extractor; no page script is executed.
+- **Structural HTML snippet** - a length-capped `<head>` + truncated `<body>` string used for `htmlRegex`/`cssClasses` signatures only.
+
+All fields are bounded by `EXTRACTION_LIMITS`. Detection is deterministic, runs on the host (never in the worker), and introduces no new network access.

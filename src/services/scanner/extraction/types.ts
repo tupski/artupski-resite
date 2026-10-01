@@ -18,6 +18,47 @@
 /** Outcome of attempting to extract one page. */
 export type PageStatus = 'completed' | 'failed' | 'timeout' | 'skipped';
 
+/**
+ * Bounded technology-detection evidence captured from a page (Phase 5).
+ *
+ * All fields are untrusted page content and are size-capped by
+ * `EXTRACTION_LIMITS` before they leave the worker. They are carried on the
+ * normalized page so the detection engine can run on already-collected,
+ * bounded evidence without any additional network access.
+ *
+ * `jsGlobals` holds only boolean presence probes (never evaluated values), so
+ * no site script is executed to build this record.
+ */
+export interface PageTechEvidence {
+  /** Lower-cased response header name -> value (values may be trimmed). */
+  responseHeaders: Record<string, string>;
+  /** Cookie name -> value length only; raw values are never retained. */
+  cookieNames: string[];
+  /** Absolute or page-relative script `src` URLs, deduped and capped. */
+  scriptSrcs: string[];
+  /** `<meta name|property>` -> content for technology-relevant meta tags. */
+  metaTags: Record<string, string>;
+  /** Known custom-element / distinctive element markers present on the page. */
+  domMarkers: string[];
+  /** Boolean presence probes of well-known JS globals (never their values). */
+  jsGlobals: Record<string, boolean>;
+  /** Bounded structural HTML signature snippet (head/first N bytes), no body text. */
+  htmlSnippet: string;
+}
+
+/** An all-empty evidence record (used for failure/skip pages and fixtures). */
+export function createEmptyTechEvidence(): PageTechEvidence {
+  return {
+    responseHeaders: {},
+    cookieNames: [],
+    scriptSrcs: [],
+    metaTags: {},
+    domMarkers: [],
+    jsGlobals: {},
+    htmlSnippet: ''
+  };
+}
+
 export interface PageHeading {
   level: number;
   text: string;
@@ -49,6 +90,8 @@ export interface PageExtraction {
   links: string[];
   images: Array<{ src: string; alt: string }>;
   metrics: PageMetrics;
+  /** Phase 5 detection evidence (bounded; see `PageTechEvidence`). */
+  tech: PageTechEvidence;
   /** Extraction-level warnings (e.g. "title missing"), never fatal. */
   warnings: string[];
 }
@@ -67,6 +110,8 @@ export interface NormalizedPage {
   externalLinks: string[];
   images: PageImageRef[];
   metrics: PageMetrics;
+  /** Bounded Phase 5 detection evidence; absent on failure/skip pages. */
+  tech?: PageTechEvidence;
   status: PageStatus;
   errorCode: string | null;
   errorMessage: string | null;

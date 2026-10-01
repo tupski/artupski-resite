@@ -20,6 +20,7 @@ import { createStorageError } from '../errors';
 import type { SchemaMigrationRow } from '../types';
 import { MIGRATION_001_INIT } from './001_init';
 import { MIGRATION_002_SCAN_PAGES } from './002_scan_pages';
+import { MIGRATION_003_TECHNOLOGY_DETECTION } from './003_technology_detection';
 import type { AppliedMigration, Migration, MigrationResult } from './types';
 
 export type { AppliedMigration, Migration, MigrationResult } from './types';
@@ -28,7 +29,11 @@ export type { AppliedMigration, Migration, MigrationResult } from './types';
  * Ordered registry. Append new migrations; never reorder or edit applied SQL
  * (a change would break checksum verification for existing databases).
  */
-export const MIGRATIONS: readonly Migration[] = [MIGRATION_001_INIT, MIGRATION_002_SCAN_PAGES];
+export const MIGRATIONS: readonly Migration[] = [
+  MIGRATION_001_INIT,
+  MIGRATION_002_SCAN_PAGES,
+  MIGRATION_003_TECHNOLOGY_DETECTION
+];
 
 const CREATE_TRACKING_TABLE = `
 CREATE TABLE IF NOT EXISTS schema_migrations (

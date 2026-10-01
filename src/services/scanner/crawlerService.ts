@@ -37,9 +37,11 @@ import type {
   CreateScanInput,
   UpdateScanProgressInput,
   UpdateScanStatusInput,
-  UpsertScanPageInput
+  UpsertScanPageInput,
+  UpsertScanTechnologyInput
 } from '../storage';
 import { pathForUrl } from '../storage';
+import { detectTechnologies, type DetectionInput, type DetectionReport } from '../detector';
 import { createCrawlScope, type CrawlScope, type CrawlScopeOptions } from './crawlScope';
 import { normalizeUrl } from './normalization';
 import { CrawlFrontier } from './frontier';
@@ -70,6 +72,8 @@ export interface CrawlResult {
   pagesDiscovered: number;
   pageFailures: number;
   pagesPersisted: number;
+  /** Number of technologies persisted for this scan (Phase 5). */
+  technologiesDetected: number;
   error: StructuredError | null;
 }
 
@@ -81,6 +85,8 @@ export interface CrawlPersistence {
   findActive(): Promise<Scan[]>;
   upsertPages(inputs: UpsertScanPageInput[]): Promise<number>;
   countPages(scanId: string): Promise<number>;
+  /** Persist the detection report (Phase 5). Optional for non-detection callers. */
+  upsertTechnologies?(inputs: UpsertScanTechnologyInput[]): Promise<number>;
 }
 
 /** Worker port the service depends on (implemented by `ScannerWorkerClient`). */
@@ -184,8 +190,12 @@ export class CrawlerService {
 
     let pagesPersisted = 0;
     let pageFailures = 0;
+    let technologiesDetected = 0;
     const frontier = new CrawlFrontier({ maxDepth: limits.maxDepth, maxPages: limits.maxPages });
     const batch: UpsertScanPageInput[] = [];
+    // Bounded detection evidence accumulated per page. Only the bounded tech
+    // record is retained - never raw page content.
+    const detectionInputs: DetectionInput[] = [];
 
     const flush = async (): Promise<void> => {
       if (batch.length === 0) {
@@ -272,6 +282,9 @@ export class CrawlerService {
           if (page.status === 'completed') {
             this.emitPageLoaded(scanId, item.url, page, item.depth);
             this.enqueueLinks(frontier, scope, page, item.depth, scanId);
+            if (page.tech) {
+              detectionInputs.push({ url: page.finalUrl || page.requestedUrl, tech: page.tech });
+            }
           } else {
             pageFailures += 1;
             this.emitPageFailed(
@@ -308,6 +321,18 @@ export class CrawlerService {
         pagesScanned: stats.scanned
       });
 
+      // Run technology detection AFTER pages are durable but BEFORE any terminal
+      // status is written, so a `completed` scan always has its detections
+      // persisted. A fatal crawl failure skips detection (the scan is `failed`);
+      // a cancelled crawl still persists the partial detections it collected.
+      if (!fatalError) {
+        technologiesDetected = await this.runDetection(
+          scanId,
+          request.projectId,
+          detectionInputs
+        );
+      }
+
       if (run.cancelled) {
         await this.transition(scanId, 'in_progress', 'cancelled');
         this.events.emit(
@@ -319,7 +344,16 @@ export class CrawlerService {
           })
         );
         this.log.info('Crawl cancelled', { scanId, pagesScanned: stats.scanned });
-        return this.result(scanId, 'cancelled', stats.scanned, stats.discovered, pageFailures, pagesPersisted, null);
+        return this.result(
+          scanId,
+          'cancelled',
+          stats.scanned,
+          stats.discovered,
+          pageFailures,
+          pagesPersisted,
+          null,
+          technologiesDetected
+        );
       }
 
       if (fatalError) {
@@ -347,7 +381,16 @@ export class CrawlerService {
         })
       );
       this.log.info('Crawl completed', { scanId, pagesScanned: stats.scanned, pageFailures });
-      return this.result(scanId, 'completed', stats.scanned, stats.discovered, pageFailures, pagesPersisted, null);
+      return this.result(
+        scanId,
+        'completed',
+        stats.scanned,
+        stats.discovered,
+        pageFailures,
+        pagesPersisted,
+        null,
+        technologiesDetected
+      );
     } catch (error) {
       const structured = toScannerError(error);
       this.log.error('Crawl aborted by an unexpected error', structured, { scanId });
@@ -463,6 +506,84 @@ export class CrawlerService {
   ): Promise<void> {
     assertTransition(from, to);
     await this.persistence.updateStatus(scanId, { status: to, ...(errorDetails ? { errorDetails } : {}) });
+  }
+
+  /**
+   * Run the deterministic detection engine over the collected page evidence and
+   * persist the report. Returns the number of technologies persisted. Emits
+   * `technology.scan_started`, one `technology.detected` per result, and
+   * `technology.scan_completed`. Detection is best-effort relative to the crawl:
+   * a persistence failure here surfaces as a scan failure (the caller treats a
+   * throw as fatal) rather than silently claiming success.
+   */
+  private async runDetection(
+    scanId: string,
+    projectId: string,
+    inputs: DetectionInput[]
+  ): Promise<number> {
+    this.events.emit(
+      createEvent('technology.scan_started', {
+        scanId,
+        projectId,
+        pagesConsidered: inputs.length
+      })
+    );
+
+    const report: DetectionReport = detectTechnologies(inputs);
+    const persistence = this.persistence;
+    let persisted = 0;
+    if (report.technologies.length > 0 && persistence.upsertTechnologies) {
+      const rows: UpsertScanTechnologyInput[] = report.technologies.map((tech) => ({
+        scanId,
+        technologyId: tech.technologyId,
+        category: tech.category,
+        name: tech.name,
+        version: tech.version,
+        confidence: tech.confidence,
+        confidenceStatus: tech.confidenceStatus,
+        versionStatus: tech.versionStatus,
+        detectionSource: 'deterministic_rules',
+        evidence: tech.matchedSignals.map((signal) => ({
+          vector: signal.vector,
+          evidence: signal.evidence,
+          weight: signal.weight
+        })),
+        pages: tech.pages,
+        limitation: tech.limitation
+      }));
+      persisted = await persistence.upsertTechnologies(rows);
+    }
+
+    for (const tech of report.technologies) {
+      this.events.emit(
+        createEvent('technology.detected', {
+          scanId,
+          projectId,
+          technologyId: tech.technologyId,
+          name: tech.name,
+          category: tech.category,
+          confidence: tech.confidence,
+          confidenceStatus: tech.confidenceStatus,
+          version: tech.version
+        })
+      );
+    }
+
+    this.events.emit(
+      createEvent('technology.scan_completed', {
+        scanId,
+        projectId,
+        detectedCount: report.technologies.length,
+        pagesWithEvidence: report.pagesWithEvidence,
+        partial: report.truncatedEvidence
+      })
+    );
+    this.log.info('Technology detection completed', {
+      scanId,
+      detected: report.technologies.length,
+      pagesWithEvidence: report.pagesWithEvidence
+    });
+    return persisted;
   }
 
   private pageRecord(scanId: string, depth: number, page: NormalizedPage): UpsertScanPageInput {
@@ -588,8 +709,18 @@ export class CrawlerService {
     pagesDiscovered: number,
     pageFailures: number,
     pagesPersisted: number,
-    error: StructuredError | null
+    error: StructuredError | null,
+    technologiesDetected = 0
   ): CrawlResult {
-    return { scanId, status, pagesScanned, pagesDiscovered, pageFailures, pagesPersisted, error };
+    return {
+      scanId,
+      status,
+      pagesScanned,
+      pagesDiscovered,
+      pageFailures,
+      pagesPersisted,
+      technologiesDetected,
+      error
+    };
   }
 }

@@ -105,6 +105,14 @@ Phase 4 turns the launch/navigate foundation into a working page crawler and wir
 - **UI seam**: `src/services/scanner/scanService.ts` is the only module the UI uses to run a crawl. It validates the target, resolves the project, launches the shared browser session through `BrowserRuntime`, runs the crawl, and exposes cancellation. `src/stores/scanStore.ts` mirrors the crawl's own `scanner.*` events into real progress; `src/routes/ScanRoute.tsx` renders honest lifecycle states. The React UI still never touches Playwright or child processes - it goes through this service and consumes events.
 - **Documented limitation (unchanged)**: packaging the worker + Chromium into the release artifact is still deferred; the crawler requires the desktop runtime (the browser preview reports an honest "desktop application required" state).
 
+### 5.x Technology Detection Engine (Phase 5)
+
+- **Engine**: `src/services/detector/` is a deterministic, rule-based engine consuming the bounded page evidence the crawler already captured (`PageTechEvidence`). It runs host-side (never in the browser worker) and makes **no network requests**; detection is a pure function of persisted evidence.
+- **Separation**: evidence projection (`evidence.ts`), rule data (`rules.ts`), matching (`matcher.ts`), confidence (`confidence.ts`), version extraction (`version.ts`), and cross-page aggregation (`engine.ts`) are independent modules; new signatures are added to the rule table without touching the engine.
+- **Integration**: `src/services/scanner/crawlerService.ts` runs detection after page batches are durable and before the scan reaches a terminal status, persists via `TechnologyRepository.upsertMany`, and emits `technology.scan_started` / `technology.detected` / `technology.scan_completed`.
+- **UI seam**: `src/stores/technologyStore.ts` reads persisted rows (`scan_technologies`) as the source of truth and mirrors the `technology.*` events for live refresh; `src/components/scan/TechnologyPanel.tsx` renders them. The React UI never imports the engine internals.
+- **Deferred**: no custom-rule file merge, no HAR-based `networkRequests`, no JS-global value inspection (presence only), and version detection is best-effort.
+
 ---
 
 ## 6. Frontend Skill Requirement

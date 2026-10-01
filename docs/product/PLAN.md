@@ -178,6 +178,21 @@ This final Phase 4 workstream wires the UI to the crawler, fixes the opt-in test
 - **Potential Risks**: Obfuscated or bundled production code hiding signatures.
 - **Verification**: Scan a known React+Tailwind site; confirm detected badges in scan result.
 
+### Phase 6 Implementation Notes (technology detection, as built)
+
+> **Phase-number note (documented, not silent):** this work was commissioned and delivered as
+> "Phase 5 - Technology Detection" against `docs/specs/TECHNOLOGY-DETECTION.md`. The PLAN.md phase
+> list places technology detection at **Phase 6** and reserves **Phase 5** for Authentication &
+> Session Scanning. The two are the same deliverable; the numbering differs between the commission
+> and this plan. Authentication remains unimplemented.
+
+1. **Evidence capture extension (authorized)**: because the Phase 4 crawler persisted only page metadata/structure, the extraction contract was extended with a bounded `PageTechEvidence` (`src/services/scanner/extraction/types.ts`) - response headers, cookie names only, script `src` URLs, meta tags, DOM markers, boolean JS-global probes, and a length-capped HTML snippet. All sizes are capped in `EXTRACTION_LIMITS`; cookie values are never retained; no page script is executed.
+2. **Engine**: `src/services/detector/` implements the documented pipeline with separated concerns (evidence projection, data-driven rules, matcher, confidence, version extraction, cross-page aggregation). Confidence follows `C(T) = 1 - ∏(1 - w_i)` with the spec thresholds; weak signals are never presented as confirmed.
+3. **Persistence**: migration `003_technology_detection.ts` extends the existing `scan_technologies` table (no redundant table) and adds a `(scan_id, technology_id)` UNIQUE index; `TechnologyRepository.upsertMany()` writes a report in one transaction. See `DATABASE.md` section 2.3.
+4. **Lifecycle**: detection runs in `CrawlerService` after page batches are durable and before any terminal status; new `technology.*` events were added. A completed scan always has its detections; cancellation retains partial detections.
+5. **UI**: a "Detected technologies" panel on the Scan route renders persisted rows only, with honest version/confidence labelling and loading/empty/error/partial states.
+6. **Documented deviations from the spec's JSON example**: no runtime custom-rule file merge / `override` engine is implemented (rules are a static, data-driven table); `networkRequests` is derived from HTML attributes rather than a HAR; JS-global detection is presence-only. Coverage is limited to the implemented rule table.
+
 ---
 
 ## Phase 7: Responsive Layout & Viewport Analysis

@@ -174,3 +174,17 @@ The crawler enforces an explicit URL/network access policy (`src/services/scanne
 **Documented limitations (do not overclaim):** this policy cannot guarantee arbitrary URLs are safe. A compromised DNS resolver, a proxy configured outside the app, or a target site issuing requests to third-party hosts from its own page JavaScript are outside what a URL policy can enforce. Top-level navigation is validated pre-navigation and post-redirect; a redirect that has already left the process cannot be recalled, so the post-navigation check refuses to extract from a prohibited destination rather than claiming the request never occurred. Query parameters and sensitive URL components are never logged.
 
 **UI seam (Phase 4 workstream 3):** the Scan screen runs crawls only through `src/services/scanner/scanService.ts`, which validates the target URL before touching the worker, resolves the owning project from the local database, and reuses the `BrowserRuntime` worker process. The React UI never constructs a URL policy, spawns a process, or bypasses the crawler service. Failures are surfaced to the user as a message plus suggested action (never a raw stack trace or worker output).
+
+### 6.6 Technology Detection Evidence (Phase 5)
+
+Technology detection consumes evidence the crawler already captured; it introduces **no new network access** and executes **no page code**.
+
+- **No arbitrary requests**: the engine (`src/services/detector/`) is a pure function of persisted, bounded evidence. It never constructs a URL, spawns a process, or performs I/O.
+- **No script execution**: `jsGlobals` detection records only the **boolean presence** of well-known globals (`typeof window[name] !== 'undefined'`). No page value is read, returned, or evaluated, so detection cannot run site code.
+- **Cookie values are never retained**: the worker derives only cookie **names** from `set-cookie` headers. The value is dropped before it leaves the worker, so session tokens cannot reach evidence, storage, logs, or the UI (asserted in tests).
+- **Bounded untrusted input**: every evidence field is size-capped (`EXTRACTION_LIMITS`), the HTML signature snippet is length-capped, and per-vector evidence counts are bounded, so a hostile page cannot exhaust memory or matching time.
+- **Regex safety**: all rule patterns are simple, single-group, non-nested regexes (compiled once, cached); catastrophic backtracking is not possible. A malformed rule pattern fails closed (no match) rather than throwing.
+- **Untrusted rendering**: technology names, categories, versions, and evidence strings are rendered as text in React (no `dangerouslySetInnerHTML`), so page-supplied evidence cannot inject markup.
+- **Honest output**: a weak single-signal match is never presented as confirmed; low-confidence candidates are suppressed; version extraction never guesses. Detection failure to persist surfaces as a scan failure rather than a silent success.
+
+**Documented limitations:** detection coverage is limited to the implemented rule table and the captured vectors. `networkRequests` is derived from HTML `href`/`src`/`action` attributes (no HAR yet), so API-endpoint signatures may be missed. The structural HTML snippet is truncated, so signatures past the cap may be missed (surfaced as `partial`). Headers can be masked by a reverse proxy, and obfuscated bundles can hide script signatures.

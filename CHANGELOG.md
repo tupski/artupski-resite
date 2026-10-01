@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 5 - technology detection
+
+Rule-based technology detection running over the evidence the Phase 4 crawler already collects. **No new network access** is introduced: detection consumes bounded, persisted page evidence only. No authentication, responsive capture, AI, or blueprint/clone/project generation.
+
+- **Evidence capture (Phase 4 extension, authorized)**: the in-page extractor and worker now also collect a bounded `PageTechEvidence` record per page - response headers, cookie **names only** (never values), script `src` URLs, technology-relevant `<meta>` tags, distinctive DOM markers, boolean JS-global presence probes (no page script is executed), and a length-capped structural HTML snippet. All fields are size-capped by `EXTRACTION_LIMITS`.
+- **Detection engine**: `src/services/detector/` - a deterministic, data-driven engine with cleanly separated evidence projection (`evidence.ts`), rule table (`rules.ts`), matcher (`matcher.ts`), confidence model (`confidence.ts`), version extraction (`version.ts`), and cross-page aggregation (`engine.ts`). Confidence follows the documented formula `C(T) = 1 - ∏(1 - w_i)` with the spec's thresholds (Detected ≥ 0.75, Probable ≥ 0.50, suppressed below 0.50).
+- **Persistence**: forward-only migration `003_technology_detection.ts` adds `technology_id`, `confidence_status`, `version_status`, `evidence`, `pages`, and `limitation` to the existing `scan_technologies` table, plus a `(scan_id, technology_id)` UNIQUE index for idempotent re-runs. `TechnologyRepository.upsertMany()` writes a whole report in one transaction. `001`/`002` are untouched.
+- **Lifecycle**: detection runs inside `CrawlerService` after pages are durable but **before** any terminal status, so a `completed` scan always has its detections persisted. New `technology.scan_started` / `technology.detected` / `technology.scan_completed` events were added to the taxonomy.
+- **UI**: `src/routes/ScanRoute.tsx` renders a "Detected technologies" panel driven by persisted rows (via `src/stores/technologyStore.ts` and `src/components/scan/TechnologyPanel.tsx`). It shows name, category, version (with an honest "version n/a"/"major" label when not exact), confidence status, and an expandable evidence list; loading, empty, error, and partial-capture states are covered.
+- **Documented limitations**: coverage is limited to the implemented rule table and the captured vectors; `networkRequests` is derived from HTML `href`/`src`/`action` attributes (no HAR yet); JS-global detection is presence-only; version detection is best-effort and never guessed.
+
 ### Phase 4 (workstream 3) - scan UI integration and documentation
 
 Wires the existing Scan route/controls to the real crawler and finalizes the Phase 4 docs. **No technology detection, responsive analysis, authentication, AI, or blueprint/clone/project generation** - those remain later phases.

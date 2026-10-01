@@ -99,14 +99,37 @@ export interface ScanPage {
   createdAt: string;
 }
 
+/** One matched signal persisted with a detection (Phase 5). */
+export interface ScanTechnologyEvidence {
+  vector: string;
+  evidence: string;
+  weight: number;
+}
+
+/**
+ * A detected technology persisted by Phase 5. Extends the Phase 2 `ScanTechnology`
+ * shape with the detection metadata required by
+ * docs/specs/TECHNOLOGY-DETECTION.md section 4.3. `technologyId`, the status
+ * fields, `evidence`, and `pages` are null/empty for rows written before
+ * migration 003.
+ */
 export interface ScanTechnology {
   id: string;
   scanId: string;
+  /** Stable rule id, e.g. `nextjs`. Null for pre-Phase-5 rows. */
+  technologyId: string | null;
   category: string;
   name: string;
   version: string | null;
+  /** `detected` | `probable` | `unknown`; null for pre-Phase-5 rows. */
+  confidenceStatus: string | null;
   confidence: number;
+  /** `exact` | `major_only` | `unavailable`; null for pre-Phase-5 rows. */
+  versionStatus: string | null;
   detectionSource: string;
+  evidence: ScanTechnologyEvidence[];
+  pages: string[];
+  limitation: string | null;
   metadata: string | null;
   createdAt: string;
 }

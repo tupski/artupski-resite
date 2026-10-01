@@ -369,10 +369,20 @@ async function handleExtract(message: WorkerCommandMessage): Promise<WorkerResul
       return payload;
     }
 
+    // Playwright joins multiple `set-cookie` headers with a newline in the
+    // headers() map; split them so each cookie's NAME can be derived. Only the
+    // name is retained downstream - never the cookie value.
+    const setCookieHeaders = (headers['set-cookie'] ?? '')
+      .split('\n')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+
     const evidence: PageExtraction = await extractPageEvidence(page as never, {
       requestedUrl,
       finalUrl,
-      httpStatus: status
+      httpStatus: status,
+      responseHeaders: headers,
+      setCookieHeaders
     });
     const normalized = normalizeExtraction(evidence, { scope });
     const payload: ExtractResultPayload = { command: 'extract', sessionId: message.payload.sessionId, page: normalized };

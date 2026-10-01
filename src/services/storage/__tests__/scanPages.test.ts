@@ -35,10 +35,10 @@ function input(scanId: string, overrides: Partial<UpsertScanPageInput> = {}): Up
 
 describe('migration 002 (scan_pages)', () => {
   it('is registered, applied, and checksum-stable', async () => {
-    expect(MIGRATIONS.map((m) => m.version)).toEqual([1, 2]);
+    expect(MIGRATIONS.map((m) => m.version)).toEqual([1, 2, 3]);
     const storage = await createTestStorage();
     const applied = readAppliedMigrations(storage.db);
-    expect(applied.map((m) => m.version)).toEqual([1, 2]);
+    expect(applied.map((m) => m.version)).toEqual([1, 2, 3]);
     expect(applied[1]?.name).toBe('scan_pages');
     expect(applied[1]?.checksum).toBe(computeChecksum(MIGRATIONS[1]!.sql));
     await storage.close();
@@ -150,7 +150,7 @@ describe('ScanPageRepository', () => {
     expect(pages.find((p) => p.url === 'https://example.com/b')?.status).toBe('failed');
 
     // The migration ledger is intact and migrations did not re-run.
-    expect(readAppliedMigrations(reopened.db).map((m) => m.version)).toEqual([1, 2]);
+    expect(readAppliedMigrations(reopened.db).map((m) => m.version)).toEqual([1, 2, 3]);
 
     await storage.close();
     await reopened.close();

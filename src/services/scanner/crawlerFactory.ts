@@ -9,7 +9,13 @@
  * UI workstream); this factory only adapts the repositories + worker client.
  */
 import { storageService } from '../storage';
-import type { CreateScanInput, UpdateScanProgressInput, UpdateScanStatusInput, UpsertScanPageInput } from '../storage';
+import type {
+  CreateScanInput,
+  UpdateScanProgressInput,
+  UpdateScanStatusInput,
+  UpsertScanPageInput,
+  UpsertScanTechnologyInput
+} from '../storage';
 import { ScannerWorkerClient } from './scannerWorkerClient';
 import { CrawlerService, type CrawlPersistence, type CrawlWorker, type CrawlerServiceDeps } from './crawlerService';
 import type { Scan } from '../../types/models';
@@ -34,6 +40,9 @@ export function createStorageCrawlPersistence(): CrawlPersistence {
     },
     async countPages(scanId: string): Promise<number> {
       return storageService.getRepositories().pages.countByScan(scanId);
+    },
+    async upsertTechnologies(inputs: UpsertScanTechnologyInput[]): Promise<number> {
+      return storageService.getRepositories().technologies.upsertMany(inputs);
     }
   };
 }

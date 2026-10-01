@@ -56,6 +56,8 @@ export interface ScanRunOutcome {
   pagesScanned: number;
   pagesDiscovered: number;
   pageFailures: number;
+  /** Number of technologies persisted for this scan (Phase 5). */
+  technologiesDetected: number;
   error: StructuredError | null;
 }
 
@@ -207,6 +209,7 @@ function toOutcome(result: CrawlResult): ScanRunOutcome {
     pagesScanned: result.pagesScanned,
     pagesDiscovered: result.pagesDiscovered,
     pageFailures: result.pageFailures,
+    technologiesDetected: result.technologiesDetected,
     error: result.error
   };
 }

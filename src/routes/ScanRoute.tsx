@@ -6,9 +6,11 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { StatusIndicator, type StatusTone } from '../components/ui/StatusIndicator';
 import { IconAlert } from '../components/ui/icons';
+import { TechnologyPanel } from '../components/scan/TechnologyPanel';
 import { SCAN_STATUS_LABEL, type ScanStatus } from '../types/scan';
 import { useScanStore } from '../stores/scanStore';
 import { useProjectsStore } from '../stores/projectsStore';
+import { useTechnologyStore } from '../stores/technologyStore';
 import { validateTargetUrl } from '../lib/url';
 
 /**
@@ -58,6 +60,14 @@ export function ScanRoute() {
   const createProject = useProjectsStore((state) => state.createProject);
   const mutating = useProjectsStore((state) => state.mutating);
 
+  const scanId = useScanStore((state) => state.scanId);
+  const detections = useTechnologyStore((state) => state.detections);
+  const detectionsLoading = useTechnologyStore((state) => state.loading);
+  const detectionsError = useTechnologyStore((state) => state.error);
+  const detectionsPartial = useTechnologyStore((state) => state.partial);
+  const loadDetections = useTechnologyStore((state) => state.loadForScan);
+  const clearDetections = useTechnologyStore((state) => state.clear);
+
   const cancelRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
   const previousStatus = useRef<ScanStatus>(status);
@@ -104,6 +114,19 @@ export function ScanRoute() {
       statusRef.current?.focus();
     }
   }, [status]);
+
+  // Load persisted detections when a scan id appears, and mirror live detection
+  // events while the scan finishes. The database is the source of truth; the
+  // event subscription only triggers a refresh.
+  useEffect(() => {
+    if (!scanId) {
+      clearDetections();
+      return;
+    }
+    void loadDetections(scanId);
+    const unsubscribe = useTechnologyStore.getState().watch(scanId);
+    return unsubscribe;
+  }, [scanId, loadDetections, clearDetections]);
 
   const canStart = validation.valid && projectId !== null && !scanning && !mutating;
   const needsProject = validation.valid && projectId === null;
@@ -383,6 +406,20 @@ export function ScanRoute() {
             ) : null}
           </div>
         </Panel>
+
+        {scanId ? (
+          <Panel
+            title="Detected technologies"
+            actions={<Badge tone="neutral">{detections.length}</Badge>}
+          >
+            <TechnologyPanel
+              detections={detections}
+              loading={detectionsLoading}
+              error={detectionsError}
+              partial={detectionsPartial}
+            />
+          </Panel>
+        ) : null}
       </div>
     </PageShell>
   );

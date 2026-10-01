@@ -84,8 +84,8 @@ describe('createStorage lifecycle', () => {
       onMigrationComplete: (migration) => completed.push(migration.version)
     });
 
-    expect(started).toEqual([1, 2]);
-    expect(completed).toEqual([1, 2]);
+    expect(started).toEqual([1, 2, 3]);
+    expect(completed).toEqual([1, 2, 3]);
     await instance.close();
   });
 

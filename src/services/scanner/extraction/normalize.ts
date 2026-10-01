@@ -14,7 +14,14 @@
 import { classifyLink, type CrawlScope } from '../crawlScope.ts';
 import { resolveAndNormalize } from '../normalization.ts';
 import { EXTRACTION_LIMITS, trimToNull, trimToString } from './limits.ts';
-import type { NormalizedPage, PageExtraction, PageHeading, PageImageRef, PageStatus } from './types.ts';
+import type {
+  NormalizedPage,
+  PageExtraction,
+  PageHeading,
+  PageImageRef,
+  PageStatus,
+  PageTechEvidence
+} from './types.ts';
 
 export interface NormalizeContext {
   scope: CrawlScope;
@@ -81,6 +88,67 @@ function normalizeImages(
   return result;
 }
 
+/**
+ * Normalize technical evidence: resolve script URLs against the page, dedupe,
+ * cap sizes, and lower-case header names. Header VALUES are retained because
+ * they are detection evidence (e.g. `server`, `x-powered-by`); they are already
+ * bounded by the worker and never include request credentials. Cookie VALUES are
+ * never present in the input.
+ */
+function normalizeTech(tech: PageTechEvidence | undefined, baseUrl: string): PageTechEvidence {
+  const responseHeaders: Record<string, string> = {};
+  let headerCount = 0;
+  for (const [key, value] of Object.entries(tech?.responseHeaders ?? {})) {
+    if (headerCount >= EXTRACTION_LIMITS.maxResponseHeaders) {
+      break;
+    }
+    responseHeaders[key.toLowerCase()] = trimToString(
+      typeof value === 'string' ? value : null,
+      EXTRACTION_LIMITS.maxHeaderValueLength
+    );
+    headerCount += 1;
+  }
+
+  const scriptSrcs: string[] = [];
+  const seenScripts = new Set<string>();
+  for (const rawSrc of (tech?.scriptSrcs ?? []).slice(0, EXTRACTION_LIMITS.maxScriptSrcs)) {
+    const resolved = resolveAndNormalize(baseUrl, rawSrc);
+    if (!resolved || resolved.length > EXTRACTION_LIMITS.maxUrlLength || seenScripts.has(resolved)) {
+      continue;
+    }
+    seenScripts.add(resolved);
+    scriptSrcs.push(resolved);
+  }
+
+  const metaTags: Record<string, string> = {};
+  let metaCount = 0;
+  for (const [key, value] of Object.entries(tech?.metaTags ?? {})) {
+    if (metaCount >= EXTRACTION_LIMITS.maxMetaTags) {
+      break;
+    }
+    metaTags[key.toLowerCase()] = trimToString(
+      typeof value === 'string' ? value : null,
+      EXTRACTION_LIMITS.maxMetaValueLength
+    );
+    metaCount += 1;
+  }
+
+  const jsGlobals: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(tech?.jsGlobals ?? {})) {
+    jsGlobals[key] = value === true;
+  }
+
+  return {
+    responseHeaders,
+    cookieNames: (tech?.cookieNames ?? []).slice(0, EXTRACTION_LIMITS.maxCookieNames),
+    scriptSrcs,
+    metaTags,
+    domMarkers: (tech?.domMarkers ?? []).slice(0, EXTRACTION_LIMITS.maxDomMarkers),
+    jsGlobals,
+    htmlSnippet: trimToString(tech?.htmlSnippet, EXTRACTION_LIMITS.maxHtmlSnippetLength) ?? ''
+  };
+}
+
 /** Build a normalized page result from raw extraction evidence. */
 export function normalizeExtraction(raw: PageExtraction, context: NormalizeContext): NormalizedPage {
   const baseUrl = raw.finalUrl || raw.requestedUrl;
@@ -109,6 +177,7 @@ export function normalizeExtraction(raw: PageExtraction, context: NormalizeConte
       domContentLoadedTimeMs: Math.max(0, Math.round(raw.metrics.domContentLoadedTimeMs)),
       domNodeCount: Math.max(0, Math.round(raw.metrics.domNodeCount))
     },
+    tech: normalizeTech(raw.tech, baseUrl),
     status: context.status ?? 'completed',
     errorCode: context.errorCode ?? null,
     errorMessage: trimToNull(context.errorMessage, EXTRACTION_LIMITS.maxTextFieldLength),
@@ -135,6 +204,15 @@ export function buildUnavailablePage(
     externalLinks: [],
     images: [],
     metrics: { loadTimeMs: 0, domContentLoadedTimeMs: 0, domNodeCount: 0 },
+    tech: {
+      responseHeaders: {},
+      cookieNames: [],
+      scriptSrcs: [],
+      metaTags: {},
+      domMarkers: [],
+      jsGlobals: {},
+      htmlSnippet: ''
+    },
     status: context.status,
     errorCode: context.errorCode,
     errorMessage: trimToNull(context.errorMessage, EXTRACTION_LIMITS.maxTextFieldLength),

@@ -54,6 +54,16 @@ Phase 4 adds the per-page persistence the crawler needs. It is delivered as a **
 - **Repositories**: `ScanPageRepository` (`src/services/storage/repositories/scanPageRepository.ts`) owns `scan_pages`; `ScanRepository` gains `updateProgress()` (counter updates) and `findActive()` / `findActiveByProject()` (live-scan detection for duplicate-start prevention). `ScanPageRepository.upsertMany()` writes a batch inside a single transaction and persists once (bounded writes), rather than one full-database export per page.
 - **Partial/failed scans**: a page that could not be fetched is persisted with `status` `failed`/`timeout`/`skipped` and never `completed`; a cancelled or failed scan keeps the pages it already captured. A scan is only marked `completed` after the final page batch is written.
 
+### 2.3 Phase 5 Implementation Note (as built)
+
+Phase 5 (technology detection) reuses the `scan_technologies` table created in `001_init` and extends it with a **new, additive migration** (`src/services/storage/migrations/003_technology_detection.ts`, version `3`). `001` and `002` are never edited.
+
+- **Columns added to `scan_technologies`**: `technology_id` (stable rule id, e.g. `nextjs`), `confidence_status` (`detected | probable | unknown`), `version_status` (`exact | major_only | unavailable`), `evidence` (JSON array of matched signals), `pages` (JSON array of contributing page URLs), and `limitation` (nullable honest note). The pre-existing `metadata` column is left in place (forward-only; not dropped).
+- **Indexes**: a **UNIQUE** `idx_scan_technologies_scan_tech (scan_id, technology_id)` makes re-running detection idempotent (upsert, not duplicate), and `idx_scan_technologies_scan_name (scan_id, name)` supports the results ordering. Legacy rows have a NULL `technology_id`; SQLite treats NULLs as distinct in a UNIQUE index, so they are unaffected.
+- **Repository**: `TechnologyRepository.upsertMany()` writes a whole detection report inside one transaction and persists once; `listByScan()` / `countByScan()` / `deleteByScan()` provide typed reads/cleanup. The `(scan_id, technology_id)` conflict target drives the upsert.
+- **Cascade**: `scan_technologies.scan_id` remains `REFERENCES scans(id) ON DELETE CASCADE`, so deleting a scan removes its detections (verified in tests).
+- **Lifecycle ordering**: detection is persisted after page batches are durable and **before** the scan is marked `completed`, so a completed scan always has its detections. A cancelled crawl retains the detections collected so far; a fatal crawl failure does not run detection.
+
 ---
 
 ## 3. Relational Schema & Table Definitions
