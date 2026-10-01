@@ -74,6 +74,15 @@ class AuthFakeWorker implements BrowserWorkerAdapter {
         return { command: 'abort', sessionId: command.sessionId };
       case 'close':
         return { command: 'close', sessionId: command.sessionId };
+      case 'captureState':
+        return {
+          command: 'captureState',
+          sessionId: command.sessionId,
+          scopeHost: command.scopeHost,
+          storageState: STATE,
+          cookieCount: STATE.cookies.length,
+          originCount: STATE.origins.length
+        };
       default:
         throw new Error(`unexpected command ${command.command}`);
     }
@@ -101,6 +110,71 @@ describe('BrowserRuntime authenticated sessions', () => {
     const launch = worker.commands.find((c) => c.command === 'launch');
     expect(launch).toBeDefined();
     expect((launch as { authState?: unknown }).authState).toBeUndefined();
+  });
+
+  it('opens a headed capture window with capture intent and no injected state', async () => {
+    const worker = new AuthFakeWorker();
+    const runtime = new BrowserRuntime(worker);
+    await runtime.initialize();
+
+    const opened = await runtime.launchCaptureSession('https://app.example.com/login');
+    expect(opened.ok).toBe(true);
+    const launch = worker.commands.find((c) => c.command === 'launch');
+    expect(launch).toMatchObject({ command: 'launch', headless: false, capture: true });
+    expect((launch as { authState?: unknown }).authState).toBeUndefined();
+    expect(runtime.getCaptureSession()).toEqual({
+      sessionId: 'session-1',
+      scopeHost: 'app.example.com'
+    });
+  });
+
+  it('refuses a second capture window while one is open', async () => {
+    const worker = new AuthFakeWorker();
+    const runtime = new BrowserRuntime(worker);
+    await runtime.initialize();
+    await runtime.launchCaptureSession('https://app.example.com/login');
+
+    const second = await runtime.launchCaptureSession('https://app.example.com/login');
+    expect(second.ok).toBe(false);
+  });
+
+  it('rejects a non-http(s) capture target', async () => {
+    const worker = new AuthFakeWorker();
+    const runtime = new BrowserRuntime(worker);
+    await runtime.initialize();
+
+    const opened = await runtime.launchCaptureSession('file:///etc/passwd');
+    expect(opened.ok).toBe(false);
+    if (opened.ok) return;
+    expect(opened.error.code).toBe('CAPTURE_URL_INVALID');
+  });
+
+  it('captures the scoped state and closes on cancel', async () => {
+    const worker = new AuthFakeWorker();
+    const runtime = new BrowserRuntime(worker);
+    await runtime.initialize();
+    await runtime.launchCaptureSession('https://app.example.com/login');
+
+    const captured = await runtime.captureSessionState();
+    expect(captured.ok).toBe(true);
+    if (!captured.ok) return;
+    expect(captured.data.scopeHost).toBe('app.example.com');
+    const capture = worker.commands.find((c) => c.command === 'captureState');
+    expect(capture).toMatchObject({ command: 'captureState', scopeHost: 'app.example.com' });
+
+    await runtime.cancelCapture();
+    expect(runtime.getCaptureSession()).toBeNull();
+    expect(worker.commands.filter((c) => c.command === 'close').length).toBeGreaterThan(0);
+  });
+
+  it('is a no-op to cancel when no capture window is open', async () => {
+    const worker = new AuthFakeWorker();
+    const runtime = new BrowserRuntime(worker);
+    await runtime.initialize();
+
+    const result = await runtime.cancelCapture();
+    expect(result.ok).toBe(true);
+    expect(worker.commands.find((c) => c.command === 'close')).toBeUndefined();
   });
 
   it('detects a login wall through the session and returns only signals', async () => {

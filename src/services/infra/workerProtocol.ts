@@ -43,7 +43,7 @@ export type BrowserEngine = 'chromium';
 
 /** The closed set of operations the worker understands. */
 export type WorkerCommandName =
-  'ping' | 'launch' | 'navigate' | 'close' | 'extract' | 'abort' | 'detectLogin';
+  'ping' | 'launch' | 'navigate' | 'close' | 'extract' | 'abort' | 'detectLogin' | 'captureState';
 
 /**
  * A per-domain storage state the host injects into a browser context.
@@ -102,6 +102,14 @@ export interface LaunchCommandPayload {
   command: 'launch';
   engine: BrowserEngine;
   headless: boolean;
+  /**
+   * Capture intent (AUTH-SCANNING.md section 2.1). When true this launch is a
+   * headed, user-in-the-loop interactive session: the worker MUST reject any
+   * `authState`, and the host owns closing it via `close`. It is a distinct,
+   * auditable intent, not merely `headless === false`, so a capture context can
+   * never silently be treated as a scan context.
+   */
+  capture?: boolean;
   /** Optional explicit executable; when omitted Playwright resolves its own. */
   executablePath?: string;
   /**
@@ -164,6 +172,23 @@ export interface DetectLoginCommandPayload {
   timeoutMs: number;
 }
 
+/**
+ * Capture the current storage state out of an interactive (headed) session's
+ * context after the user has completed login manually (AUTH-SCANNING.md section
+ * 2.1). The worker returns the state so the HOST can encrypt and persist it; the
+ * worker itself never writes it to disk, logs it, or echoes it in any event.
+ *
+ * The state is scoped to `scopeHost`: cookies whose domain does not match and
+ * origins whose hostname is not the scope host are dropped, so a capture can
+ * never persist state for an unrelated origin.
+ */
+export interface CaptureStateCommandPayload {
+  command: 'captureState';
+  sessionId: string;
+  /** Hostname the capture is scoped to (the interactive login target). */
+  scopeHost: string;
+}
+
 export type WorkerCommandPayload =
   | PingCommandPayload
   | LaunchCommandPayload
@@ -171,7 +196,8 @@ export type WorkerCommandPayload =
   | CloseCommandPayload
   | ExtractCommandPayload
   | AbortCommandPayload
-  | DetectLoginCommandPayload;
+  | DetectLoginCommandPayload
+  | CaptureStateCommandPayload;
 
 // ---------------------------------------------------------------------------
 // Result payloads (worker -> host)
@@ -235,6 +261,23 @@ export interface DetectLoginResultPayload {
   signals: LoginDetectionSignals;
 }
 
+/**
+ * The storage state captured from an interactive session, already scoped to the
+ * requested host by the worker. Carried host-side only long enough to encrypt
+ * and persist; it is never logged, never emitted as an event, and never written
+ * to disk by the worker.
+ */
+export interface CaptureStateResultPayload {
+  command: 'captureState';
+  sessionId: string;
+  /** Host the capture was scoped to (echoed for host-side validation). */
+  scopeHost: string;
+  /** Scoped storage state; the host encrypts and persists it. */
+  storageState: AuthStorageState;
+  cookieCount: number;
+  originCount: number;
+}
+
 export type WorkerResultPayload =
   | PingResultPayload
   | LaunchResultPayload
@@ -242,7 +285,8 @@ export type WorkerResultPayload =
   | CloseResultPayload
   | ExtractResultPayload
   | AbortResultPayload
-  | DetectLoginResultPayload;
+  | DetectLoginResultPayload
+  | CaptureStateResultPayload;
 
 // ---------------------------------------------------------------------------
 // Event / log / error payloads
@@ -345,7 +389,8 @@ const COMMAND_NAMES: readonly WorkerCommandName[] = [
   'close',
   'extract',
   'abort',
-  'detectLogin'
+  'detectLogin',
+  'captureState'
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -406,6 +451,12 @@ function validateCommandPayload(payload: unknown): boolean {
       return (
         payload.engine === 'chromium' &&
         typeof payload.headless === 'boolean' &&
+        (payload.capture === undefined || typeof payload.capture === 'boolean') &&
+        // A capture context is user-in-the-loop and MUST NOT receive an injected
+        // session, and a capture context MUST be headed. Enforced at the wire
+        // boundary so the invariant cannot be violated by a future caller.
+        (payload.capture !== true ||
+          (payload.headless === false && payload.authState === undefined)) &&
         (payload.executablePath === undefined || isNonEmptyString(payload.executablePath)) &&
         (payload.authState === undefined || isAuthStorageState(payload.authState))
       );
@@ -440,6 +491,8 @@ function validateCommandPayload(payload: unknown): boolean {
         typeof payload.timeoutMs === 'number' &&
         Number.isFinite(payload.timeoutMs)
       );
+    case 'captureState':
+      return isNonEmptyString(payload.sessionId) && isNonEmptyString(payload.scopeHost);
     default:
       return false;
   }
@@ -478,6 +531,14 @@ function validateResultPayload(payload: unknown): boolean {
         isNonEmptyString(payload.finalUrl) &&
         (payload.status === null || typeof payload.status === 'number') &&
         isRecord(payload.signals)
+      );
+    case 'captureState':
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNonEmptyString(payload.scopeHost) &&
+        isAuthStorageState(payload.storageState) &&
+        typeof payload.cookieCount === 'number' &&
+        typeof payload.originCount === 'number'
       );
     default:
       return false;

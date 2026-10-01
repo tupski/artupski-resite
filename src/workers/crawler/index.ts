@@ -36,6 +36,7 @@ import {
   createEmptyLoginSignals,
   type AuthStorageState,
   type BrowserAvailability,
+  type CaptureStateResultPayload,
   type CloseResultPayload,
   type DetectLoginResultPayload,
   type ExtractResultPayload,
@@ -57,6 +58,13 @@ const WORKER_VERSION = '0.2.0';
 
 /** Hard ceiling for any navigation, matching AGENTS.md section 4 (30s). */
 const MAX_NAVIGATION_TIMEOUT_MS = 30_000;
+
+/**
+ * Reads the page's `sessionStorage` as a plain object. Used only during capture
+ * (AUTH-SCANNING.md section 2.1 step 5), which Playwright's `storageState()`
+ * does not include. The values are treated as secrets and are never logged.
+ */
+const SESSION_STORAGE_PROBE = 'Object.fromEntries(Object.entries(window.sessionStorage))';
 
 // ---------------------------------------------------------------------------
 // Minimal structural types for playwright-core (imported lazily, no download).
@@ -88,6 +96,17 @@ interface PlaywrightPage {
 interface PlaywrightContext {
   newPage(): Promise<PlaywrightPage>;
   close(): Promise<void>;
+  /**
+   * Snapshot the context's cookies + origin storage. Only ever called for an
+   * interactive capture session; the result is scoped, returned to the host for
+   * encryption, and never logged or written to disk here.
+   */
+  storageState(): Promise<unknown>;
+  /**
+   * Open pages in this context. Used only to read `sessionStorage` (which
+   * `storageState()` does not include) from the pages the user signed in on.
+   */
+  pages(): PlaywrightPage[];
 }
 
 interface PlaywrightBrowser {
@@ -113,6 +132,14 @@ interface ActiveSession {
   context: PlaywrightContext;
   engine: 'chromium';
   version: string;
+  /**
+   * True for a headed, user-in-the-loop interactive capture session
+   * (AUTH-SCANNING.md section 2.1). A capture session is the ONLY session on
+   * which `captureState` is permitted, and it never carries an injected
+   * `authState`, so a capture context can never be silently used as a scan
+   * context.
+   */
+  capture: boolean;
   /** Abort controller for the in-flight extraction, if any. */
   activeAbort: AbortController | null;
 }
@@ -215,6 +242,22 @@ async function handleLaunch(message: WorkerCommandMessage): Promise<WorkerResult
     });
   }
 
+  // Capture-session invariants (AUTH-SCANNING.md section 2.1). A capture
+  // session is user-in-the-loop and MUST be headed and MUST NOT carry an
+  // injected state, so a capture context can never be silently promoted to a
+  // scan context. Enforced here as well as at the protocol boundary.
+  const capture = message.payload.capture === true;
+  if (capture && message.payload.authState !== undefined) {
+    throw Object.assign(new Error('A capture session cannot carry an injected session.'), {
+      code: 'WORKER_PROTOCOL_VIOLATION'
+    });
+  }
+  if (capture && message.payload.headless !== false) {
+    throw Object.assign(new Error('A capture session must be headed (headless:false).'), {
+      code: 'WORKER_PROTOCOL_VIOLATION'
+    });
+  }
+
   const browser = await chromium.launch({
     headless: message.payload.headless,
     executablePath: message.payload.executablePath ?? detection.executablePath
@@ -232,11 +275,19 @@ async function handleLaunch(message: WorkerCommandMessage): Promise<WorkerResult
   }
   const context = await browser.newContext(contextOptions);
 
-  sessions.set(sessionId, { browser, context, engine: 'chromium', version, activeAbort: null });
+  sessions.set(sessionId, {
+    browser,
+    context,
+    engine: 'chromium',
+    version,
+    capture,
+    activeAbort: null
+  });
   emitEvent('browser.launched', {
     sessionId,
     version,
-    authenticated: message.payload.authState !== undefined
+    authenticated: message.payload.authState !== undefined,
+    capture
   });
 
   const payload: LaunchResultPayload = {
@@ -277,6 +328,185 @@ function toPlaywrightStorageState(state: AuthStorageState): {
       }))
     }))
   };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Strip a leading dot from a cookie Domain attribute. */
+function normalizedCookieDomain(domain: string): string {
+  return (domain.startsWith('.') ? domain.slice(1) : domain).toLowerCase();
+}
+
+/**
+ * True when a cookie applies to the scope host under standard cookie rules: an
+ * exact host match, or a parent-domain cookie (`Domain=example.com`) that also
+ * applies to a subdomain. Anything else is out of scope and is dropped.
+ */
+function cookieInScope(cookieDomain: string, scopeHost: string): boolean {
+  const domain = normalizedCookieDomain(cookieDomain);
+  const host = scopeHost.toLowerCase();
+  return domain === host || host.endsWith(`.${domain}`);
+}
+
+/** True when an origin's hostname is exactly the scope host. */
+function originInScope(origin: string, scopeHost: string): boolean {
+  try {
+    return new URL(origin).hostname.toLowerCase() === scopeHost.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+/** The `scheme://host` origin of a URL, or null when unparseable. */
+function safeOrigin(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+/** Convert Playwright's `[{name,value}]` storage into the host's Record shape. */
+function toStorageMap(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (isPlainRecord(entry) && typeof entry.name === 'string') {
+        out[entry.name] = String(entry.value ?? '');
+      }
+    }
+  } else if (isPlainRecord(value)) {
+    for (const [key, item] of Object.entries(value)) {
+      out[key] = String(item ?? '');
+    }
+  }
+  return out;
+}
+
+/**
+ * Collect `sessionStorage` for the in-scope origins. `storageState()` returns
+ * ONLY origins that have localStorage, so an origin with just sessionStorage
+ * would be lost; the origins are therefore also derived from the in-scope pages
+ * the user signed in on (AUTH-SCANNING.md section 2.1 step 5). Nothing is
+ * logged or persisted here.
+ */
+async function collectSessionStorage(
+  context: PlaywrightContext,
+  origins: Map<
+    string,
+    { origin: string; localStorage: Record<string, string>; sessionStorage: Record<string, string> }
+  >,
+  scopeHost: string
+): Promise<void> {
+  for (const page of context.pages()) {
+    let pageUrl: string;
+    try {
+      pageUrl = page.url();
+    } catch {
+      continue;
+    }
+    const origin = safeOrigin(pageUrl);
+    if (!origin || !originInScope(origin, scopeHost)) {
+      continue;
+    }
+    let record = origins.get(origin);
+    if (!record) {
+      record = { origin, localStorage: {}, sessionStorage: {} };
+      origins.set(origin, record);
+    }
+    try {
+      const entries = await page.evaluate<Record<string, string>>(SESSION_STORAGE_PROBE);
+      if (isPlainRecord(entries)) {
+        for (const [key, value] of Object.entries(entries)) {
+          record.sessionStorage[key] = String(value ?? '');
+        }
+      }
+    } catch {
+      // A closed or blank page simply yields no sessionStorage.
+    }
+  }
+}
+
+/**
+ * Snapshot an interactive capture session's storage state, scoped strictly to
+ * the capture host (AUTH-SCANNING.md section 2.1). Cookies and origins that do
+ * not belong to the scope host are dropped so a capture can never persist state
+ * for an unrelated origin. The result is returned to the host for encryption;
+ * nothing is persisted, logged, or emitted here.
+ */
+async function handleCaptureState(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
+  if (message.payload.command !== 'captureState') {
+    throw new Error('captureState handler received the wrong command');
+  }
+  const session = sessions.get(message.payload.sessionId);
+  if (!session) {
+    throw Object.assign(new Error(`Unknown session "${message.payload.sessionId}".`), {
+      code: 'PLAYWRIGHT_CRASHED'
+    });
+  }
+  if (!session.capture) {
+    // Only an interactive capture session may yield state: a scan session is
+    // never a valid capture source, so ownership can never be taken silently.
+    throw Object.assign(new Error('This session is not an interactive capture session.'), {
+      code: 'WORKER_PROTOCOL_VIOLATION'
+    });
+  }
+
+  const raw = (await session.context.storageState()) as { cookies?: unknown; origins?: unknown };
+  const scopeHost = message.payload.scopeHost;
+
+  const cookies = (Array.isArray(raw?.cookies) ? raw.cookies : [])
+    .filter(isPlainRecord)
+    .filter(
+      (cookie) => typeof cookie.domain === 'string' && cookieInScope(cookie.domain, scopeHost)
+    )
+    .map((cookie) => ({
+      name: String(cookie.name),
+      value: String(cookie.value),
+      domain: String(cookie.domain),
+      path: typeof cookie.path === 'string' ? cookie.path : '/',
+      expires: typeof cookie.expires === 'number' ? cookie.expires : -1,
+      httpOnly: cookie.httpOnly === true,
+      secure: cookie.secure === true,
+      sameSite: (cookie.sameSite === 'Strict' || cookie.sameSite === 'None'
+        ? cookie.sameSite
+        : 'Lax') as 'Strict' | 'Lax' | 'None'
+    }));
+
+  // Seed origins from storageState() (localStorage), then overlay sessionStorage
+  // read from the in-scope pages so an origin with only sessionStorage is not
+  // lost. Both are keyed by origin to avoid duplicates.
+  const originMap = new Map<
+    string,
+    { origin: string; localStorage: Record<string, string>; sessionStorage: Record<string, string> }
+  >();
+  for (const rawOrigin of (Array.isArray(raw?.origins) ? raw.origins : []).filter(isPlainRecord)) {
+    if (typeof rawOrigin.origin !== 'string' || !originInScope(rawOrigin.origin, scopeHost)) {
+      continue;
+    }
+    originMap.set(rawOrigin.origin, {
+      origin: rawOrigin.origin,
+      localStorage: toStorageMap(rawOrigin.localStorage),
+      sessionStorage: {}
+    });
+  }
+
+  // storageState() omits sessionStorage; read it from the signed-in pages so the
+  // captured model matches AUTH-SCANNING.md section 2.1.
+  await collectSessionStorage(session.context, originMap, scopeHost);
+  const origins = Array.from(originMap.values());
+
+  const payload: CaptureStateResultPayload = {
+    command: 'captureState',
+    sessionId: message.payload.sessionId,
+    scopeHost,
+    storageState: { cookies, origins },
+    cookieCount: cookies.length,
+    originCount: origins.length
+  };
+  return payload;
 }
 
 async function handleNavigate(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
@@ -629,6 +859,9 @@ async function dispatch(message: WorkerCommandMessage): Promise<void> {
         break;
       case 'detectLogin':
         payload = await handleDetectLogin(message);
+        break;
+      case 'captureState':
+        payload = await handleCaptureState(message);
         break;
       default:
         throw Object.assign(new Error('Unsupported command.'), {

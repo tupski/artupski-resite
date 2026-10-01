@@ -58,6 +58,7 @@ export type ErrorCode =
   | 'WORKER_PROTOCOL_VIOLATION'
   | 'WORKER_SHUTDOWN_FAILED'
   | 'BROWSER_NOT_INSTALLED'
+  | 'CAPTURE_URL_INVALID'
   | 'IPC_ERROR'
   | 'UNKNOWN_ERROR';
 
@@ -100,7 +101,7 @@ export function createStructuredError(input: CreateStructuredErrorInput): Struct
     recoverable: input.recoverable ?? true,
     retryable: input.retryable ?? false,
     suggestedAction: input.suggestedAction ?? DEFAULT_SUGGESTED_ACTION,
-    timestamp: new Date().toISOString(),
+    timestamp: new Date().toISOString()
   };
 
   if (input.details !== undefined) {
@@ -138,7 +139,7 @@ export function toStructuredError(
     recoverable: fallback.recoverable ?? true,
     retryable: fallback.retryable ?? false,
     suggestedAction: fallback.suggestedAction,
-    cause: error,
+    cause: error
   });
 }
 

@@ -36,8 +36,19 @@ const FILE_ROUTES = new Map([
   ['/crawler', join(FIXTURES_DIR, 'crawler', 'index.html')],
   ['/crawler/', join(FIXTURES_DIR, 'crawler', 'index.html')],
   ['/crawler/about', join(FIXTURES_DIR, 'crawler', 'about.html')],
-  ['/crawler/assets/logo.svg', join(FIXTURES_DIR, 'crawler', 'assets', 'logo.svg')]
+  ['/crawler/assets/logo.svg', join(FIXTURES_DIR, 'crawler', 'assets', 'logo.svg')],
+  // Auth fixtures for the interactive capture flow. No real credentials.
+  ['/auth/login', join(FIXTURES_DIR, 'auth', 'login.html')],
+  ['/auth/public', join(FIXTURES_DIR, 'auth', 'public.html')],
+  ['/auth/protected', join(FIXTURES_DIR, 'auth', 'protected.html')]
 ]);
+
+/**
+ * Name of the deterministic session cookie the auth fixture issues on login.
+ * It is a fixed, non-sensitive marker, never a real credential.
+ */
+export const FIXTURE_SESSION_COOKIE = 'fixture_session';
+const FIXTURE_SESSION_VALUE = 'authenticated';
 
 /** Behavioural routes exercised by the Phase 4 crawler tests. */
 const REDIRECTS = new Map([
@@ -59,6 +70,20 @@ function resolveFixturePath(pathname) {
   return candidate;
 }
 
+/** True when the request carries the fixture session cookie with its value. */
+function hasFixtureSession(cookieHeader) {
+  if (!cookieHeader) {
+    return false;
+  }
+  return cookieHeader
+    .split(';')
+    .map((part) => part.trim())
+    .some((part) => {
+      const [name, value] = part.split('=');
+      return name === FIXTURE_SESSION_COOKIE && value === FIXTURE_SESSION_VALUE;
+    });
+}
+
 async function serveFile(response, filePath, contentType = HTML) {
   try {
     const body = await readFile(filePath);
@@ -77,6 +102,43 @@ async function handleRequest(request, response) {
   if (REDIRECTS.has(pathname)) {
     response.writeHead(302, { location: REDIRECTS.get(pathname), 'cache-control': 'no-store' });
     response.end();
+    return;
+  }
+
+  // Auth fixture: a POST to the login route issues the deterministic session
+  // cookie and redirects to the protected page. No credential is ever checked
+  // or stored - this fixture simulates a login, it does not authenticate anyone.
+  if (pathname === '/auth/login' && request.method === 'POST') {
+    response.writeHead(302, {
+      location: '/auth/protected',
+      'set-cookie': `${FIXTURE_SESSION_COOKIE}=${FIXTURE_SESSION_VALUE}; Path=/; HttpOnly; SameSite=Lax`,
+      'cache-control': 'no-store'
+    });
+    response.end();
+    return;
+  }
+
+  // Deterministic "completed login" link for the capture E2E: it issues the same
+  // session cookie as the POST handler and redirects onward. It performs no
+  // credential check and accepts no user input, so the test never automates
+  // credential entry.
+  if (pathname === '/auth/login/complete') {
+    response.writeHead(302, {
+      location: '/auth/protected',
+      'set-cookie': `${FIXTURE_SESSION_COOKIE}=${FIXTURE_SESSION_VALUE}; Path=/; HttpOnly; SameSite=Lax`,
+      'cache-control': 'no-store'
+    });
+    response.end();
+    return;
+  }
+
+  // Protected page: require the session cookie; otherwise 401 with a sign-in
+  // link, which is the auth wall the classifier is expected to detect.
+  if (pathname === '/auth/protected' && !hasFixtureSession(request.headers.cookie)) {
+    response.writeHead(401, { ...HTML, 'www-authenticate': 'Cookie realm="fixture"' });
+    response.end(
+      '<!doctype html><title>Sign in required</title><p><a href="/auth/login">Sign in</a></p>'
+    );
     return;
   }
 

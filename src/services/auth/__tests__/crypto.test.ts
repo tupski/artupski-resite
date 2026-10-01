@@ -94,6 +94,52 @@ describe('auth crypto', () => {
       code: 'STORAGE_WRITE_FAILED'
     });
   });
+
+  it('fails closed on malformed Base64 in the envelope', async () => {
+    const salt = createSalt();
+    const encrypted = await encryptSessionState({
+      plaintext: PLAINTEXT,
+      installationSeed: SEED,
+      projectSalt: salt
+    });
+    // 'not*base64!' is not decodable by atob and must not silently succeed.
+    await expect(
+      decryptSessionState({
+        ...encrypted,
+        ciphertext: 'not*base64!',
+        installationSeed: SEED,
+        projectSalt: salt
+      })
+    ).rejects.toMatchObject({ code: 'STORAGE_READ_FAILED' });
+  });
+
+  it('fails closed when the authentication tag is truncated', async () => {
+    const salt = createSalt();
+    const encrypted = await encryptSessionState({
+      plaintext: PLAINTEXT,
+      installationSeed: SEED,
+      projectSalt: salt
+    });
+    await expect(
+      decryptSessionState({
+        ...encrypted,
+        authTag: encrypted.authTag.slice(0, 4),
+        installationSeed: SEED,
+        projectSalt: salt
+      })
+    ).rejects.toMatchObject({ code: 'STORAGE_READ_FAILED' });
+  });
+
+  it('never embeds the plaintext secret in the ciphertext', async () => {
+    const salt = createSalt();
+    const encrypted = await encryptSessionState({
+      plaintext: PLAINTEXT,
+      installationSeed: SEED,
+      projectSalt: salt
+    });
+    expect(encrypted.ciphertext).not.toContain('super-secret-token');
+    expect(encrypted.iv).not.toBe(encrypted.authTag);
+  });
 });
 
 describe('redactSecrets', () => {

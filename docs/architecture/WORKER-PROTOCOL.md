@@ -36,7 +36,7 @@ interface WorkerEnvelope<TType, TPayload> {
 
 | Type | Direction | Purpose |
 | :--- | :--- | :--- |
-| `command` | host → worker | An operation to perform (`ping`, `launch`, `navigate`, `close`, `extract`, `abort`, `detectLogin`). |
+| `command` | host → worker | An operation to perform (`ping`, `launch`, `navigate`, `close`, `extract`, `abort`, `detectLogin`, `captureState`). |
 | `result` | worker → host | The correlated outcome of a command (matched by `id`). May carry `error`. |
 | `event` | worker → host | Asynchronous worker telemetry (e.g. `browser.launched`). |
 | `log` | worker → host | Structured log line (level + message + optional metadata). |
@@ -63,25 +63,35 @@ interface WorkerEnvelope<TType, TPayload> {
 
 ## 3. Commands
 
-Phase 3 implements `ping` / `launch` / `navigate` / `close`. Phase 4 (workstream 1) adds `extract` and `abort` — still **no** DOM/CSS/JS analysis, network analysis, technology detection, or screenshotting (those are later phases).
+Phase 3 implements `ping` / `launch` / `navigate` / `close`. Phase 4 (workstream 1) adds `extract` and `abort` — still **no** DOM/CSS/JS analysis, network analysis, technology detection, or screenshotting (those are later phases). The Authentication phase adds `detectLogin` (a pure presence probe) and `captureState` (the interactive-capture snapshot; see §3.1).
 
 | Command | Payload | Result |
 | :--- | :--- | :--- |
 | `ping` | `{}` | `{ pong: true, workerVersion, browser? }` — also reports browser availability without downloading. |
-| `launch` | `{ engine: 'chromium', headless, executablePath? }` | `{ sessionId, engine, version }` |
+| `launch` | `{ engine: 'chromium', headless, capture?, executablePath?, authState? }` | `{ sessionId, engine, version }` |
 | `navigate` | `{ sessionId, url, timeoutMs }` | `{ sessionId, url, status, title }` |
 | `close` | `{ sessionId }` | `{ sessionId }` |
 | `extract` | `{ sessionId, url, timeoutMs, followRedirects?, allowedContentTypes?, maxRedirects? }` | `{ sessionId, page: NormalizedPage }` |
 | `abort` | `{ sessionId }` | `{ sessionId }` |
+| `detectLogin` | `{ sessionId, url, timeoutMs }` | `{ sessionId, url, finalUrl, status, signals }` — boolean presence only; no page data. |
+| `captureState` | `{ sessionId, scopeHost }` | `{ sessionId, scopeHost, storageState, cookieCount, originCount }` — interactive capture snapshot, host-scoped. |
 
 - `navigate.timeoutMs` and `extract.timeoutMs` are **clamped to ≤ 30 000 ms** by both the worker and the host client (AGENTS.md section 4, "Zero Headless Hangs").
 - `launch` throws `BROWSER_NOT_INSTALLED` when no Chromium build is present and no explicit `executablePath` was supplied.
 - `extract` enforces the shared URL/network policy at the pre-navigation boundary and re-validates the final URL after redirects; it returns a bounded, normalized `NormalizedPage` (never raw DOM). `maxRedirects` is capped at 5 and `allowedContentTypes` defaults to HTML only.
 - `abort` cancels an in-flight extraction for a session.
 
-### 3.1 Versioning note (Phase 4)
+### 3.1 Versioning note (Phase 4 + Authentication)
 
-The Phase 4 additions are **additive**: the envelope shape is unchanged and `WORKER_PROTOCOL_VERSION` stays `1`. A Phase 3 host that does not know `extract`/`abort` is unaffected (it never sends them); a Phase 4 host requires a Phase 4 worker, which is the same worker process shipped here.
+All additions after Phase 3 are **additive**: the envelope shape is unchanged and `WORKER_PROTOCOL_VERSION` stays `1`. A host that does not know `extract`/`abort`/`detectLogin`/`captureState` is unaffected (it never sends them).
+
+### 3.2 Interactive capture (`launch` capture flag + `captureState`)
+
+- `launch` with `capture: true` opens a **headed** window (`headless: false`). The worker **rejects** a capture launch that is not headed or that carries an `authState` (`WORKER_PROTOCOL_VIOLATION`), and the protocol validator enforces the same invariant on the wire.
+- `captureState` is permitted **only** on a session created with `capture: true`; called on a scan session it throws `WORKER_PROTOCOL_VIOLATION`. This prevents a scan context from being silently harvested.
+- The worker drops cookies whose domain does not apply to `scopeHost` and origins whose hostname is not `scopeHost`, and it reads `sessionStorage` from the signed-in, same-origin pages (Playwright's `storageState()` omits it).
+- The captured state is returned to the host to encrypt; the worker never logs, emits, or persists it. `close`/shutdown closes the capture context and browser.
+- The interactive flow is split across separate requests (open … user logs in … `captureState` … `close`), so a human login is never bounded by the 30s request ceiling; each individual round-trip stays within it.
 
 ---
 

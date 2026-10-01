@@ -7,6 +7,7 @@ import { Input } from '../components/ui/Input';
 import { StatusIndicator, type StatusTone } from '../components/ui/StatusIndicator';
 import { IconAlert } from '../components/ui/icons';
 import { TechnologyPanel } from '../components/scan/TechnologyPanel';
+import { AuthCapturePanel } from '../components/auth/AuthCapturePanel';
 import { SCAN_STATUS_LABEL, type ScanStatus } from '../types/scan';
 import { useScanStore } from '../stores/scanStore';
 import { useProjectsStore } from '../stores/projectsStore';
@@ -74,6 +75,7 @@ export function ScanRoute() {
   const authSession = useAuthStore((state) => state.session);
   const authBusy = useAuthStore((state) => state.busy);
   const authError = useAuthStore((state) => state.error);
+  const authCaptureStatus = useAuthStore((state) => state.captureStatus);
   const setAuthMode = useAuthStore((state) => state.setMode);
   const refreshAuth = useAuthStore((state) => state.refresh);
   const clearAuth = useAuthStore((state) => state.clear);
@@ -234,6 +236,10 @@ export function ScanRoute() {
           actions={
             authSession ? (
               <Badge tone="success">Session ready</Badge>
+            ) : authCaptureStatus === 'awaiting_login' ||
+              authCaptureStatus === 'capturing' ||
+              authCaptureStatus === 'launching' ? (
+              <Badge tone="warning">Capturing</Badge>
             ) : (
               <Badge tone="neutral">No session</Badge>
             )
@@ -282,6 +288,12 @@ export function ScanRoute() {
               </label>
             </fieldset>
 
+            <AuthCapturePanel
+              projectId={projectId}
+              targetUrl={validation.valid ? validation.url : targetUrl}
+              disabled={scanning}
+            />
+
             {authSession ? (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-border-subtle px-3 py-2">
                 <span className="text-caption text-text-muted">
@@ -308,8 +320,8 @@ export function ScanRoute() {
 
             <p className="text-caption text-text-muted">
               Sessions are stored encrypted on this device only and are never sent to any service.
-              The interactive login window used to capture a session is not part of this build, so
-              no new session can be captured yet; existing sessions can be used or cleared.
+              You sign in yourself in a real browser window; ReSite captures only the resulting
+              session state, never your password or MFA codes.
             </p>
           </div>
         </Panel>

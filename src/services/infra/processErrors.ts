@@ -20,6 +20,7 @@ export type ProcessErrorCode =
   | 'WORKER_SHUTDOWN_FAILED'
   | 'BROWSER_NOT_INSTALLED'
   | 'PLAYWRIGHT_CRASHED'
+  | 'CAPTURE_URL_INVALID'
   | 'USER_CANCELLED';
 
 export interface ProcessErrorContext {
@@ -45,6 +46,8 @@ const SUGGESTED_ACTION: Record<ProcessErrorCode, string> = {
     'Install the browser runtime with `npx playwright install chromium`, then retry.',
   PLAYWRIGHT_CRASHED:
     'The browser process terminated abnormally. Retry; if it recurs, check available memory.',
+  CAPTURE_URL_INVALID:
+    'Enter a valid http(s) URL for the page you sign in on, then retry the capture.',
   USER_CANCELLED: 'The operation was cancelled by the user.'
 };
 
@@ -59,7 +62,8 @@ export function createProcessError(
     code === 'BROWSER_NOT_INSTALLED' ||
     code === 'PLAYWRIGHT_CRASHED';
 
-  const category = code === 'BROWSER_NOT_INSTALLED' || code === 'PLAYWRIGHT_CRASHED' ? 'browser' : 'process';
+  const category =
+    code === 'BROWSER_NOT_INSTALLED' || code === 'PLAYWRIGHT_CRASHED' ? 'browser' : 'process';
 
   return createStructuredError({
     code,

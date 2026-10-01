@@ -7,18 +7,24 @@
  * session was injected for the run, it returns exactly one of:
  *
  *   public        - no auth wall observed and no session was injected.
- *   authenticated - no auth wall observed while a session WAS injected (the
- *                   page was scanned within an active authenticated session).
+ *   authenticated - no auth wall observed while a session WAS injected. This
+ *                   value means "scanned WITH an authenticated session in
+ *                   effect"; it is NOT independent proof that the page is
+ *                   protected. It is the only honest reading available without
+ *                   an extra unauthenticated comparison request (which the spec
+ *                   forbids because it would create out-of-scope side effects).
  *   auth_required - an auth wall was observed (401/403, login redirect, or a
  *                   login form). A wall always means the session did not hold,
  *                   even when one was injected.
  *   blocked       - a CAPTCHA/WAF/rate-limit challenge, not a login form.
  *   unknown       - the page errored/timed out before it could be classified.
  *
- * Documented limitation: without an unauthenticated comparison request we cannot
- * always prove a no-wall page was genuinely protected; a no-wall page during an
- * authenticated run is labelled `authenticated` (scanned with an active
- * session), which is the honest reading of the available signals.
+ * Documented limitation (AUTH-SCANNING.md section 3.2): `authenticated` reports
+ * session USE, not verified protection. A genuinely public page reached during
+ * an authenticated scan is also labelled `authenticated`, because the classifier
+ * cannot distinguish "public page" from "protected page the session unlocked"
+ * without a second, unauthenticated request. Consumers MUST treat `authenticated`
+ * as "session was in effect", never as "access was proven required".
  *
  * IMPORTANT: this module NEVER decides success. A page classified
  * `auth_required`/`blocked`/`unknown` is never reported as an authenticated
@@ -72,7 +78,8 @@ export function classifyPageAuth(input: AuthClassifyInput): PageAuthStatus {
     return 'auth_required';
   }
 
-  // No wall observed. With a session injected the page was reached inside an
-  // authenticated session; without one it is a public page.
+  // No wall observed. With a session in effect the page was reached inside an
+  // authenticated session (`authenticated` = session used, not verified
+  // protected); without one it is truthfully `public`.
   return sessionInjected ? 'authenticated' : 'public';
 }

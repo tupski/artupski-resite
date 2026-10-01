@@ -11,6 +11,10 @@ export {
   getSessionMetadata,
   clearSession,
   isLoginRoute,
+  beginInteractiveCapture,
+  completeInteractiveCapture,
+  cancelInteractiveCapture,
+  setAuthRuntimeProviderForTests,
   type AuthServiceResult
 } from './authSessionService';
 

@@ -46,7 +46,9 @@ export type {
   AbortCommandPayload,
   AbortResultPayload,
   DetectLoginCommandPayload,
-  DetectLoginResultPayload
+  DetectLoginResultPayload,
+  CaptureStateCommandPayload,
+  CaptureStateResultPayload
 } from '../../services/infra/workerProtocol.ts';
 
 // Shared pure modules the worker enforces/uses directly. Re-exported here so the

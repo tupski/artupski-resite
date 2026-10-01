@@ -77,7 +77,8 @@ Integration tests verify multi-subsystem communication without hitting external 
   - DOM extraction correctness.
   - Network asset discovery and local disk download pipeline.
   - Cookie injection and session persistence across redirects.
-- **Authenticated crawl (as built)**: `src/services/scanner/authScanIntegration.test.ts` (fake worker + in-memory storage) covers a page reached within a session (`authenticated`), an unsatisfied session failing a `requireAuthentication` scan (`failed`, page persisted `auth_required`, no `scanner.completed`), a CAPTCHA/429 (`blocked`), an unauthenticated regression (`public`, `completed`), and that an auth-walled page's links are not followed. `src/services/browser/browserRuntime.auth.test.ts` (fake adapter) asserts the injected `storageState` is passed to `launch`, that a plain launch omits it, and that `detectLogin` returns only signals.
+- **Authenticated crawl (as built)**: `src/services/scanner/authScanIntegration.test.ts` (fake worker + in-memory storage) covers a page reached within a session (`authenticated`), an unsatisfied session failing a `requireAuthentication` scan (`failed`, page persisted `auth_required`, no `scanner.completed`), a CAPTCHA/429 (`blocked`), an unauthenticated regression (`public`, `completed`), and that an auth-walled page's links are not followed. `src/services/browser/browserRuntime.auth.test.ts` (fake adapter) asserts the injected `storageState` is passed to `launch`, that a plain launch omits it, that `detectLogin` returns only signals, and that the capture lifecycle opens a headed `capture` session, refuses a second window, rejects a non-http(s) target, and closes on cancel.
+- **Interactive capture E2E (opt-in, real Chromium)**: `src/workers/crawler/__tests__/authCapture.e2e.test.ts` opens a real headed window (fixture port `3001`), simulates a login via a fixed non-credential fixture link, captures the host-scoped state (including `sessionStorage`), closes the window, encrypts + decrypts the state, replays it in a NEW headless context, and confirms the protected fixture page returns 200 - plus that the same page without a session returns 401. Requires `npx playwright install chromium` and `RUN_BROWSER_TESTS=1`.
 
 ### 3.2 SQLite Database Repositories
 - Path: `src/services/db/__tests__/repositories.test.ts`
@@ -187,7 +188,7 @@ The default suite covers the UI seam **without any browser download**:
 
 - `src/stores/scanStore.test.ts` - the store lifecycle plus a full crawl run through `startScan()` against an injected fake browser runtime and a real in-memory SQLite database: it asserts the crawl's *real* counters (`pagesScanned`/`pagesDiscovered`), discovered URLs, completion status, and the honest runtime-unavailable failure state (no fabricated progress). `scanService` exposes `setScanRuntimeProviderForTests` / `resetScanServiceForTests` so the seam is testable without a Tauri shell.
 
-Port isolation for the three opt-in real-Chromium files: worker smoke `9099`, extraction E2E `4000`, orchestration E2E `8000`. They can be run together (`RUN_BROWSER_TESTS=1 npx vitest run src/workers/crawler`) without contending for a fixture port.
+Port isolation for the four opt-in real-Chromium files: worker smoke `9099`, extraction E2E `4000`, orchestration E2E `8000`, interactive capture E2E `3001`. They can be run together (`RUN_BROWSER_TESTS=1 npx vitest run src/workers/crawler`) without contending for a fixture port.
 
 Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):
 

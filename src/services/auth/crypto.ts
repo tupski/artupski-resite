@@ -20,12 +20,22 @@
  * It NEVER stores the derived key or the plaintext; callers hold the plaintext
  * only for the duration of an inject/decrypt operation and drop it afterwards.
  *
- * Documented deviation: AUTH-SCANNING.md section 4.1 names Argon2id; SECURITY.md
- * section 3.1 names PBKDF2 (100,000 iterations, SHA-512). The two spec sections
- * disagree. We implement the SECURITY.md variant because PBKDF2-HMAC-SHA512 is
- * available in the Web Crypto API used by both the Tauri webview and Vitest,
- * whereas Argon2id would require a new native/WASM dependency. This is a
- * documented reconciliation, not a silent one.
+ * KDF (spec-mandated): AUTH-SCANNING.md section 4.1 and SECURITY.md section 3.1
+ * both require PBKDF2 with 100,000 iterations and SHA-512 over the installation
+ * seed + per-project salt. The earlier Argon2id mention in an earlier draft was
+ * superseded; the authoritative text is PBKDF2. PBKDF2-HMAC-SHA512 is provided
+ * by the Web Crypto API in both the Tauri webview and Vitest, so no native or
+ * WASM dependency is introduced. This is the implemented, mandated algorithm -
+ * not a deviation.
+ *
+ * Threat model: the ciphertext at rest is only as strong as the seed. The seed
+ * (see `authSessionService.getInstallationSeed`) is a random 122-bit UUID held
+ * in `app_settings`, scoped to this OS user account. It protects against a
+ * database file copied off the machine without the app's settings store; it does
+ * NOT protect against an attacker who already reads the user's application data
+ * directory. Moving the seed to the OS keychain is a tracked hardening item (see
+ * SECURITY.md). A per-session random salt means one cracked key does not aid
+ * another session.
  */
 import type { StructuredError } from '../infra/errors';
 
@@ -169,14 +179,17 @@ export interface DecryptOptions extends EncryptedPayload {
  * (or a wrong seed) fails closed rather than yielding garbage plaintext.
  */
 export async function decryptSessionState(options: DecryptOptions): Promise<string> {
-  const key = await deriveSessionKey(options.installationSeed, options.projectSalt);
-  const iv = asBufferSource(bytesFromBase64(options.iv));
-  const ciphertext = bytesFromBase64(options.ciphertext);
-  const authTag = bytesFromBase64(options.authTag);
-  const combined = new Uint8Array(ciphertext.length + authTag.length);
-  combined.set(ciphertext, 0);
-  combined.set(authTag, ciphertext.length);
   try {
+    const key = await deriveSessionKey(options.installationSeed, options.projectSalt);
+    // Decoding happens INSIDE the guard: malformed Base64 (a corrupt or hostile
+    // envelope) must fail closed with a structured error, never leak a raw
+    // DOMException or partial plaintext.
+    const iv = asBufferSource(bytesFromBase64(options.iv));
+    const ciphertext = bytesFromBase64(options.ciphertext);
+    const authTag = bytesFromBase64(options.authTag);
+    const combined = new Uint8Array(ciphertext.length + authTag.length);
+    combined.set(ciphertext, 0);
+    combined.set(authTag, ciphertext.length);
     const plaintext = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv, tagLength: GCM_TAG_BYTES * 8 },
       key,

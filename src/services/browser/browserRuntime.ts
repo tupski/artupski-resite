@@ -27,6 +27,7 @@ import {
   type AuthStorageState,
   type BrowserAvailability,
   type BrowserEngine,
+  type CaptureStateResultPayload,
   type CloseResultPayload,
   type DetectLoginResultPayload,
   type LaunchResultPayload,
@@ -116,6 +117,12 @@ export class BrowserRuntime {
   private diagnostics: BrowserDiagnostics | null = null;
   private initPromise: Promise<BrowserDiagnostics> | null = null;
   private session: BrowserSession | null = null;
+  /**
+   * The interactive capture session (AUTH-SCANNING.md section 2.1), tracked
+   * SEPARATELY from `session` so a capture window can never be mistaken for the
+   * active scan session and vice versa. At most one capture is open at a time.
+   */
+  private capture: { sessionId: string; scopeHost: string } | null = null;
 
   constructor(adapter: BrowserWorkerAdapter) {
     this.adapter = adapter;
@@ -398,6 +405,154 @@ export class BrowserRuntime {
         code: 'PLAYWRIGHT_CRASHED',
         category: 'browser',
         message: 'Failed to close the browser session.'
+      });
+      this.lastError = structured;
+      return { ok: false, error: structured };
+    }
+  }
+
+  /** The interactive capture window currently open, if any. */
+  getCaptureSession(): { sessionId: string; scopeHost: string } | null {
+    return this.capture;
+  }
+
+  /**
+   * Open a headed, user-in-the-loop interactive capture window for `targetUrl`
+   * (AUTH-SCANNING.md section 2.1). The session carries NO injected state and is
+   * headed; the user completes login manually. The host only learns the scope
+   * host here - no secret is returned until `captureSessionState()` is called.
+   */
+  async launchCaptureSession(targetUrl: string): Promise<BrowserResult<BrowserSession>> {
+    let scopeHost: string;
+    try {
+      const parsed = new URL(targetUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error('non-http(s)');
+      }
+      scopeHost = parsed.hostname.toLowerCase();
+    } catch {
+      return {
+        ok: false,
+        error: createProcessError('CAPTURE_URL_INVALID', {
+          message: 'The capture target is not a valid http(s) URL.',
+          details: { url: targetUrl }
+        })
+      };
+    }
+    if (this.capture) {
+      return {
+        ok: false,
+        error: createProcessError('WORKER_PROTOCOL_VIOLATION', {
+          message: 'A capture window is already open.'
+        })
+      };
+    }
+
+    try {
+      const result = await this.adapter.request({
+        command: 'launch',
+        engine: 'chromium',
+        headless: false,
+        capture: true
+      });
+      const payload = result as LaunchResultPayload;
+      if (payload.command !== 'launch') {
+        throw createProcessError('WORKER_PROTOCOL_VIOLATION', {
+          message: 'Browser worker returned an unexpected result for launch.'
+        });
+      }
+      this.capture = { sessionId: payload.sessionId, scopeHost };
+      eventBus.emit(
+        createEvent('browser.capture_opened', { engine: 'chromium', sessionId: payload.sessionId })
+      );
+      this.log.info('Interactive capture window opened', {
+        sessionId: payload.sessionId,
+        scopeHost
+      });
+      return {
+        ok: true,
+        data: { sessionId: payload.sessionId, engine: 'chromium', version: payload.version }
+      };
+    } catch (error) {
+      const structured = toStructuredError(error, {
+        code: 'PLAYWRIGHT_CRASHED',
+        category: 'browser',
+        message: 'Failed to open the interactive capture window.'
+      });
+      this.lastError = structured;
+      return { ok: false, error: structured };
+    }
+  }
+
+  /**
+   * Capture the (host-scoped) storage state from the open interactive window
+   * after the user has logged in. The plaintext state is returned to the caller
+   * only; it is never logged, emitted, or written to disk here.
+   */
+  async captureSessionState(): Promise<BrowserResult<CaptureStateResultPayload>> {
+    if (!this.capture) {
+      return {
+        ok: false,
+        error: createProcessError('WORKER_PROTOCOL_VIOLATION', {
+          message: 'No interactive capture window is open.'
+        })
+      };
+    }
+    const { sessionId, scopeHost } = this.capture;
+    try {
+      const result = await this.adapter.request({
+        command: 'captureState',
+        sessionId,
+        scopeHost
+      });
+      const payload = result as CaptureStateResultPayload;
+      if (payload.command !== 'captureState') {
+        throw createProcessError('WORKER_PROTOCOL_VIOLATION', {
+          message: 'Browser worker returned an unexpected result for captureState.'
+        });
+      }
+      // Non-secret telemetry only; the storage state itself is never logged.
+      this.log.info('Interactive capture state retrieved', {
+        sessionId,
+        scopeHost,
+        cookieCount: payload.cookieCount,
+        originCount: payload.originCount
+      });
+      return { ok: true, data: payload };
+    } catch (error) {
+      const structured = toStructuredError(error, {
+        code: 'PLAYWRIGHT_CRASHED',
+        category: 'browser',
+        message: 'Failed to capture the session state.'
+      });
+      this.lastError = structured;
+      return { ok: false, error: structured };
+    }
+  }
+
+  /**
+   * Close and discard the interactive capture window. Idempotent: safe to call
+   * on cancellation, timeout, failure, or shutdown, and a no-op when no window
+   * is open. The captured state (if any) is never retained by this runtime.
+   */
+  async cancelCapture(): Promise<BrowserResult<true>> {
+    const open = this.capture;
+    if (!open) {
+      return { ok: true, data: true };
+    }
+    this.capture = null;
+    try {
+      await this.adapter.request({ command: 'close', sessionId: open.sessionId });
+      eventBus.emit(
+        createEvent('browser.capture_closed', { engine: 'chromium', sessionId: open.sessionId })
+      );
+      this.log.info('Interactive capture window closed', { sessionId: open.sessionId });
+      return { ok: true, data: true };
+    } catch (error) {
+      const structured = toStructuredError(error, {
+        code: 'PLAYWRIGHT_CRASHED',
+        category: 'browser',
+        message: 'Failed to close the interactive capture window.'
       });
       this.lastError = structured;
       return { ok: false, error: structured };

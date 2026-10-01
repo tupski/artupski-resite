@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Protected dashboard</title>
+  </head>
+  <body>
+    <main>
+      <h1>Protected dashboard</h1>
+      <p data-fixture="protected">Only reachable with a valid session cookie.</p>
+    </main>
+    <script>
+      // Deterministic marker so the capture E2E can prove sessionStorage is
+      // captured. It is a non-sensitive fixture value, never a real token.
+      window.sessionStorage.setItem('fixture_session', 'present');
+    </script>
+  </body>
+</html>

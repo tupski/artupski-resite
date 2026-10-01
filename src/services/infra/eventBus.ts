@@ -75,7 +75,9 @@ export type AppEventType =
   | 'browser.detected'
   | 'browser.missing'
   | 'browser.session_started'
-  | 'browser.session_closed';
+  | 'browser.session_closed'
+  | 'browser.capture_opened'
+  | 'browser.capture_closed';
 
 /** Base envelope carried by every event (EVENT-SYSTEM.md section 3). */
 export interface BaseEventPayload {
@@ -327,6 +329,9 @@ export interface AppEventPayloadMap {
   'browser.missing': BrowserMissingPayload;
   'browser.session_started': BrowserSessionPayload;
   'browser.session_closed': BrowserSessionPayload;
+  // Interactive capture carries NO secret: only the opaque session id.
+  'browser.capture_opened': BrowserSessionPayload;
+  'browser.capture_closed': BrowserSessionPayload;
   'scanner.started': ScannerStartedPayload;
   'scanner.page_discovered': ScannerPageDiscoveredPayload;
   'scanner.page_started': ScannerPageStartedPayload;

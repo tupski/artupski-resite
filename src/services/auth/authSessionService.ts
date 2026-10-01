@@ -28,11 +28,25 @@ import { createEvent, eventBus } from '../infra/eventBus';
 import { logger } from '../infra/logger';
 import { createStructuredError, type StructuredError } from '../infra/errors';
 import { storageService } from '../storage';
+import { getBrowserRuntime, type BrowserRuntime } from '../browser';
 import { encryptSessionState, decryptSessionState, createSalt } from './crypto';
 import { looksLikeLoginPath, type AuthSessionMetadata, type CapturedStorageState } from './types';
 import type { AuthSession } from '../../types/models';
 
 const INSTALLATION_ID_KEY = 'auth.installation_id';
+
+/**
+ * Resolves the live browser runtime. Injectable so the interactive capture flow
+ * can be unit-tested with a fake runtime (mirroring `scanService`). The default
+ * is the module-level singleton, which is `null` outside the Tauri shell.
+ */
+type RuntimeProvider = () => BrowserRuntime | null;
+let runtimeProvider: RuntimeProvider = getBrowserRuntime;
+
+/** Test-only: override the runtime provider; pass null to restore the default. */
+export function setAuthRuntimeProviderForTests(provider: RuntimeProvider | null): void {
+  runtimeProvider = provider ?? getBrowserRuntime;
+}
 
 export type AuthServiceResult<T> = { ok: true; data: T } | { ok: false; error: StructuredError };
 
@@ -312,4 +326,154 @@ export async function clearSession(projectId: string): Promise<AuthServiceResult
  */
 export function isLoginRoute(url: string): boolean {
   return looksLikeLoginPath(url);
+}
+
+// ---------------------------------------------------------------------------
+// Interactive (headed) capture flow - AUTH-SCANNING.md section 2.1
+//
+// Capture is a THREE-step, user-in-the-loop operation split across separate
+// requests so the human login (which may take minutes) is never bounded by the
+// 30s worker request timeout:
+//   1. beginInteractiveCapture  -> opens the headed window (returns at once)
+//   2. (user completes login in the window)
+//   3. completeInteractiveCapture -> captures + encrypts + persists, then closes
+// Cancel is always available and always closes the window.
+//
+// SECURITY: no credential is ever entered, read, or stored by the application;
+// the captured state is scoped to the target host by the worker, validated here
+// against the host the user is capturing for, and only then encrypted.
+// ---------------------------------------------------------------------------
+
+/** Validate an http(s) target URL and return its lower-cased hostname. */
+function httpHostOf(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    return parsed.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Open the headed interactive capture window for `targetUrl` and return its
+ * opaque session id. The window carries NO injected state; the user completes
+ * login manually. Never automates or observes credentials.
+ */
+export async function beginInteractiveCapture(input: {
+  targetUrl: string;
+}): Promise<AuthServiceResult<{ sessionId: string }>> {
+  if (storageService.getState() !== 'ready') {
+    return {
+      ok: false,
+      error: authError(
+        'STORAGE_NOT_READY',
+        'Cannot start the capture: local storage is not ready.',
+        'Retry once storage is ready.'
+      )
+    };
+  }
+  const host = httpHostOf(input.targetUrl);
+  if (!host) {
+    return {
+      ok: false,
+      error: authError(
+        'INVALID_URL',
+        'The capture target is not a valid http(s) URL.',
+        'Enter the full https URL of the page you sign in on.'
+      )
+    };
+  }
+  const runtime = runtimeProvider();
+  if (!runtime || runtime.getState() !== 'ready') {
+    return {
+      ok: false,
+      error: authError(
+        'BROWSER_NOT_INSTALLED',
+        'The browser runtime is not available.',
+        'Install the browser runtime with `npx playwright install chromium`, then retry.'
+      )
+    };
+  }
+
+  const started = await runtime.launchCaptureSession(input.targetUrl);
+  if (!started.ok) {
+    return { ok: false, error: started.error };
+  }
+  return { ok: true, data: { sessionId: started.data.sessionId } };
+}
+
+/**
+ * Capture the storage state from the open interactive window, verify it is
+ * scoped to the capture target, encrypt + persist it as the project's active
+ * session, and always close the window. No secret is logged or emitted.
+ */
+export async function completeInteractiveCapture(input: {
+  projectId: string;
+  targetUrl: string;
+}): Promise<AuthServiceResult<AuthSessionMetadata>> {
+  const runtime = runtimeProvider();
+  const host = httpHostOf(input.targetUrl);
+  if (!runtime || !host) {
+    return {
+      ok: false,
+      error: authError(
+        'LOGIN_FAILED',
+        'The interactive capture could not be completed.',
+        'Retry the capture from the Scan screen.'
+      )
+    };
+  }
+
+  try {
+    const captured = await runtime.captureSessionState();
+    if (!captured.ok) {
+      return { ok: false, error: captured.error };
+    }
+
+    // Scope enforcement at the host boundary: the worker already scoped the
+    // state, but the host re-checks that it matches the target the user is
+    // capturing for. A mismatch is refused so state can never be filed against
+    // an unrelated origin.
+    if (captured.data.scopeHost.toLowerCase() !== host) {
+      return {
+        ok: false,
+        error: authError(
+          'LOGIN_FAILED',
+          'The captured session did not match the chosen target domain.',
+          'Make sure you sign in on the target site, then retry the capture.'
+        )
+      };
+    }
+
+    // Playwright's storageState covers cookies + localStorage; sessionStorage is
+    // not part of that snapshot, so it is normalized to an empty map here.
+    const storageState: CapturedStorageState = {
+      cookies: captured.data.storageState.cookies,
+      origins: captured.data.storageState.origins.map((origin) => ({
+        origin: origin.origin,
+        localStorage: origin.localStorage,
+        sessionStorage: origin.sessionStorage ?? {}
+      }))
+    };
+    const result = await captureSession({
+      projectId: input.projectId,
+      targetUrl: input.targetUrl,
+      storageState
+    });
+    return result;
+  } finally {
+    // Always close the window, on success, failure, or cancellation.
+    await runtime.cancelCapture();
+  }
+}
+
+/** Close and discard the interactive capture window. Idempotent. */
+export async function cancelInteractiveCapture(): Promise<void> {
+  const runtime = runtimeProvider();
+  if (runtime) {
+    await runtime.cancelCapture();
+  }
 }
