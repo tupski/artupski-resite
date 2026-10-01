@@ -56,3 +56,22 @@ AI_MODEL="llama3.1"
 
 ## 3. UI Guidelines & Quality Contract
 - All frontend development agents must read and adhere to `C:\Users\Kakarama Room\.agents\skills\anti-ui-slop\SKILL.md` before implementing or revising UI components.
+- **Design tokens**: Tailwind CSS v3 is configured in `tailwind.config.js` with semantic color utilities backed by CSS variables defined in `src/styles/tokens.css`. Hex values come from `docs/design/UI-SPEC.md` section 3.1; components must not hardcode colors.
+
+---
+
+## 4. Phase 1 Toolchain & Scripts
+
+The Phase 1 foundation introduces the following npm scripts (see `package.json`):
+
+| Script | Purpose |
+| :--- | :--- |
+| `npm run dev` | Start the Vite dev server (browser preview) on port `1420`. |
+| `npm run build` | Typecheck and produce the production `dist/` bundle. |
+| `npm run typecheck` | `tsc --noEmit` strict type check. |
+| `npm run lint` | ESLint (`--max-warnings 0`). |
+| `npm run test` | Vitest unit/component suite. |
+| `npm run tauri:dev` | Launch the native Tauri window (requires Rust toolchain). |
+| `npm run tauri:build` | Build the native desktop bundle (requires Rust toolchain). |
+
+Test tooling: Vitest + React Testing Library + jsdom. No Playwright browser binaries are installed in Phase 1.

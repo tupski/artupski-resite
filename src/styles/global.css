@@ -1,0 +1,61 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-base text-text-primary font-sans text-body antialiased;
+    /* Desktop shell: never bounce-scroll the root window. */
+    overflow: hidden;
+  }
+
+  /* Visible, consistent focus states (UI-SPEC section 5.1). */
+  :focus-visible {
+    outline: 2px solid rgb(var(--border-focus));
+    outline-offset: 2px;
+  }
+
+  /* Thin, theme-aware scrollbars for dense tooling panels. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--border-subtle)) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--border-subtle));
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--text-muted));
+  }
+}
+
+@layer utilities {
+  /* Applied when the user has requested reduced motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

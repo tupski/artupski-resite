@@ -1,0 +1,43 @@
+/*
+ * Design tokens - Artupski ReSite
+ * Source of truth: docs/design/UI-SPEC.md section 3.1.
+ *
+ * Values are stored as raw RGB channels so Tailwind can compose them with
+ * alpha (`rgb(var(--token) / <alpha-value>)`). The `.dark` class on <html>
+ * selects the default (dark) palette; `:root` holds the light palette.
+ */
+
+:root,
+html.light {
+  --bg-base: 255 255 255;
+  --bg-surface: 248 250 252;
+  --bg-surface-elevated: 255 255 255;
+  --border-subtle: 226 232 240;
+  --border-focus: 37 99 235;
+  --text-primary: 15 23 42;
+  --text-secondary: 71 85 105;
+  --text-muted: 148 163 184;
+  --accent-brand: 37 99 235;
+  --accent-success: 22 163 74;
+  --accent-warning: 217 119 6;
+  --accent-danger: 220 38 38;
+
+  color-scheme: light;
+}
+
+html.dark {
+  --bg-base: 15 17 23;
+  --bg-surface: 22 25 34;
+  --bg-surface-elevated: 30 34 48;
+  --border-subtle: 38 44 61;
+  --border-focus: 56 189 248;
+  --text-primary: 241 245 249;
+  --text-secondary: 148 163 184;
+  --text-muted: 100 116 139;
+  --accent-brand: 2 132 199;
+  --accent-success: 34 197 94;
+  --accent-warning: 245 158 11;
+  --accent-danger: 239 68 68;
+
+  color-scheme: dark;
+}

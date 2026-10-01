@@ -309,3 +309,14 @@ export const useScanStore = create<ScanStoreState>((set) => ({
    - Interactive button touch/click targets maintain a minimum dimension of `32px` height inside dense desktop viewports.
 3. **Screen Reader Support**:
    - Aria live regions (`aria-live="polite"`) configured for scanner activity logs and progress bar percent changes.
+
+---
+
+## 6. Phase 1 Implementation Notes
+
+The Phase 1 shell implements a subset of this specification and resolves a few ambiguities:
+
+1. **Theme default**: Section 3.1 marks Dark as default; the implementation defaults to `dark` and persists the choice under the `resite.settings` localStorage key (Zustand `persist`), including a `system` option.
+2. **Tokens**: Section 3.1 hex values are encoded as RGB channel CSS variables in `src/styles/tokens.css` and consumed via Tailwind utilities (`bg-base`, `text-text-primary`, `border-border-subtle`, etc.). Components must not hardcode colors.
+3. **Scan lifecycle**: Section 4's `scanStore` shape is implemented (`idle | configuring | scanning | auth_required | completed | failed`). Phase 1 renders configuration controls only; the scan action is disabled and no progress is simulated.
+4. **Fonts**: `Inter` and `JetBrains Mono` are declared in the Tailwind font stack but are not bundled; the system fallbacks render until self-hosted fonts are introduced in a later phase.

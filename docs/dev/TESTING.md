@@ -111,16 +111,28 @@ Test Workflow: E2E Pipeline Run
 
 ## 5. Continuous Integration (CI) Pipeline Commands
 
+Phase 1 ships only the unit/component tier. Integration and E2E scripts below are reserved for later phases; the current `package.json` provides `test` / `test:unit` (both run Vitest), and the finer-grained scripts are added when those suites exist.
+
 ```bash
-# Unit & Schema Tests
+# Unit & component tests (Vitest + React Testing Library) - implemented in Phase 1
 npm run test:unit
-
-# Integration Tests with Local Test Server
-npm run test:integration
-
-# End-to-End Suite
-npm run test:e2e
 
 # Typecheck & Lint
 npm run typecheck && npm run lint
+
+# Production build
+npm run build
+
+# Native build (requires a Rust toolchain: rustc + cargo)
+npm run tauri:build
 ```
+
+Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):
+
+- `src/lib/url.test.ts` - URL normalization and validation.
+- `src/stores/*.test.ts` - store lifecycle and persistence behavior.
+- `src/services/infra/eventBus.test.ts` - typed pub/sub and payload validation.
+- `src/services/infra/errors.test.ts` - structured error model.
+- `src/services/infra/logger.test.ts` - level filtering and sinks.
+- `src/services/theme/themeController.test.ts` - theme resolution and DOM application.
+- `src/app/AppShell.test.tsx` - routing, navigation, URL entry, and settings rendering.

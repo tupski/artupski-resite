@@ -22,18 +22,28 @@ All frontend tasks across all phases MUST comply with `C:\Users\Kakarama Room\.a
 ---
 
 ## Phase 1: Core Foundation & UI Shell
+- **Status**: COMPLETE (delivered together with Phase 0 scaffolding; see the Phase 1 implementation note at the end of this document).
 - **Goal**: Establish base application shell, routing, state management, and theme system.
 - **Scope**: React Router v6 setup, Zustand store base, layout components (Sidebar, Header, Main view).
 - **Dependencies**: Phase 0.
-- **Files/Modules Affected**: `src/routes/`, `src/components/layout/`, `src/stores/`.
+- **Files/Modules Affected**: `src/app/`, `src/routes/`, `src/components/layout/`, `src/stores/`, `src/services/`, `src-tauri/`.
 - **Implementation Tasks**:
-  1. Implement app navigation (Dashboard, Scanner, Blueprints, Projects, Settings).
-  2. Implement global Zustand store for app-level state.
-  3. Build dark/light theme switching foundation following `anti-ui-slop` standards.
+  1. Implement app navigation (`Home`, `Projects`, `Scan`, `Settings`).
+  2. Implement responsibility-separated Zustand stores (settings, UI, scan) rather than a single global store.
+  3. Build dark/light/system theme foundation following `anti-ui-slop` standards.
 - **Tests**: Component render tests with Vitest + React Testing Library.
 - **Acceptance Criteria**: Navigation between all root pages works with active state highlighting.
 - **Potential Risks**: State synchronization issues across views.
 - **Verification**: Route transitions load without flicker or layout breakage.
+
+### Phase 1 Implementation Notes (as built)
+The following decisions were made during implementation and supersede the pre-implementation wording above where they conflict:
+
+1. **Routes**: The application exposes `/`, `/projects`, `/scan`, `/settings` (plus a not-found view). Dashboard/Blueprint/Scanner navigation items were intentionally NOT created because those engines are out of Phase 1 scope; navigation only links to views that exist.
+2. **State**: Three focused stores replace the originally sketched single global store: `settingsStore` (persisted preferences), `uiStore` (transient chrome), `scanStore` (scan lifecycle shape, no scanner behavior).
+3. **Phase 0**: The repository had no runnable scaffold, so Phase 1 delivered the Phase 0 tooling (Tauri 2 shell, Vite, TypeScript, Tailwind v3, ESLint, Prettier, Vitest) as a prerequisite.
+4. **Native layer**: `src-tauri` exposes only two read-only commands (`app_info`, `runtime_info`); no business logic.
+5. **Styling**: Tailwind CSS v3 with CSS-variable design tokens sourced from `UI-SPEC.md` section 3.1.
 
 ---
 

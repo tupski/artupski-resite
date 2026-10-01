@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+Phase 1 foundation - runnable Tauri 2 + React desktop application shell.
+
+- **Desktop shell**: Tauri 2 project (`src-tauri/`) with a minimal native layer exposing only two read-only commands (`app_info`, `runtime_info`); no business logic in Rust. Capability set limited to `core:default` (no filesystem, shell, or process permissions).
+- **Frontend**: React 18 + TypeScript (strict) + Vite, Tailwind CSS v3, React Router v6, Zustand 5.
+- **Routing**: `/` (Home), `/projects`, `/scan`, `/settings`, and a not-found view.
+- **UI shell**: responsive sidebar navigation with active state and keyboard support, window header with environment status and theme control, reusable primitives (`Button`, `Input`, `Panel`, `Badge`, `StatusIndicator`, `EmptyState`), inline SVG icon set.
+- **Theme system**: dark (default) / light / system modes with centralized CSS-variable tokens from `UI-SPEC.md` section 3.1, persisted, and applied pre-paint to avoid a theme flash.
+- **State**: responsibility-separated Zustand stores (`settingsStore`, `uiStore`, `scanStore`); the scan store models lifecycle without implementing a scanner.
+- **Infrastructure foundations**: typed `EventBus` (structured payloads, canonical taxonomy), structured `Logger` (single sanctioned console boundary, pluggable sinks), and a `StructuredError` model matching `ERROR-HANDLING.md`.
+- **IPC foundation**: typed command client that degrades safely in the browser preview and only invokes native commands inside the Tauri runtime.
+- **Tooling**: ESLint (+ react-hooks, no-console), Prettier (2 spaces, single quotes, no trailing commas), Vitest + React Testing Library (56 tests), `typecheck`/`lint`/`test`/`build` scripts.
+- **Icons**: generated Tauri app icon set (PNG/ICO/ICNS) via `scripts/generate-icons.mjs` without requiring the Rust toolchain.
+
+### Deferred (not in Phase 1)
+Scanner, Playwright, technology detection, SQLite persistence, authentication/session capture, Blueprint generation, AI provider calls, static clone, visual verification, project generator, and admin generation remain unimplemented.
+
+---
+
 ## [0.1.0] - 2026-10-01
 
 ### Added

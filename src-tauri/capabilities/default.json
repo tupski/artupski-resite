@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal capability set for the main window. Phase 1 exposes no filesystem, shell, or process permissions.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

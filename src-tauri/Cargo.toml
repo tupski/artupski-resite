@@ -1,0 +1,30 @@
+[package]
+name = "artupski-resite"
+version = "0.1.0"
+description = "Desktop-native reverse engineering, website cloning, and site blueprinting tool."
+authors = ["Artupski"]
+edition = "2021"
+rust-version = "1.78"
+
+# The library is exposed so the desktop binary and future integration targets
+# can share the same command surface.
+[lib]
+name = "artupski_resite_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Rust owns native desktop capabilities only (ARCHITECTURE.md section 4).
+# No business logic, no Node.js packages, no network/scanner dependencies.
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
