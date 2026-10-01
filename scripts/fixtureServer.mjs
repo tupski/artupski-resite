@@ -1,16 +1,16 @@
 /**
  * Local fixture server - Artupski ReSite
  *
- * A tiny, dependency-free Node HTTP server that serves the controlled fixture
- * pages on `http://127.0.0.1:9099` (TESTING.md section 3.1). It exists so the
- * opt-in browser smoke test can launch Chromium and navigate without touching
- * any external website.
+ * A tiny, dependency-free Node HTTP server that serves controlled fixture pages
+ * on `http://127.0.0.1:9099` (TESTING.md section 3.1). It exists so the browser
+ * smoke tests and the Phase 4 crawler integration test can launch Chromium and
+ * crawl without touching any external website.
  *
  * Usage:
  *   node scripts/fixtureServer.mjs            # serve on 127.0.0.1:9099
  *   node scripts/fixtureServer.mjs --port 9099
  *
- * Programmatic use (from the opt-in test):
+ * Programmatic use (from a test):
  *   import { startFixtureServer } from '../../../../scripts/fixtureServer.mjs';
  *   const server = await startFixtureServer();
  *   ...
@@ -27,15 +27,29 @@ const FIXTURES_DIR = join(HERE, 'fixtures');
 export const DEFAULT_FIXTURE_HOST = '127.0.0.1';
 export const DEFAULT_FIXTURE_PORT = 9099;
 
-/** Routes served by the fixture server. Keep deterministic and tiny. */
-const ROUTES = new Map([
+const HTML = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' };
+
+/** Static file routes. Keep deterministic and tiny. */
+const FILE_ROUTES = new Map([
+  ['/', join(FIXTURES_DIR, 'simple-page', 'index.html')],
   ['/simple-page', join(FIXTURES_DIR, 'simple-page', 'index.html')],
-  ['/', join(FIXTURES_DIR, 'simple-page', 'index.html')]
+  ['/crawler', join(FIXTURES_DIR, 'crawler', 'index.html')],
+  ['/crawler/', join(FIXTURES_DIR, 'crawler', 'index.html')],
+  ['/crawler/about', join(FIXTURES_DIR, 'crawler', 'about.html')],
+  ['/crawler/assets/logo.svg', join(FIXTURES_DIR, 'crawler', 'assets', 'logo.svg')]
+]);
+
+/** Behavioural routes exercised by the Phase 4 crawler tests. */
+const REDIRECTS = new Map([
+  ['/crawler/redirect', '/crawler/about'],
+  ['/crawler/redirect-loop', '/crawler/redirect-loop'],
+  ['/crawler/redirect-metadata', 'http://169.254.169.254/latest/meta-data/'],
+  ['/crawler/redirect-external', 'https://external.example.com/partner']
 ]);
 
 function resolveFixturePath(pathname) {
-  if (ROUTES.has(pathname)) {
-    return ROUTES.get(pathname);
+  if (FILE_ROUTES.has(pathname)) {
+    return FILE_ROUTES.get(pathname);
   }
   // Containment check: only files under the fixtures directory may be served.
   const candidate = normalize(join(FIXTURES_DIR, pathname));
@@ -45,24 +59,62 @@ function resolveFixturePath(pathname) {
   return candidate;
 }
 
-async function handleRequest(request, response) {
-  const url = new URL(request.url ?? '/', `http://${request.headers.host ?? DEFAULT_FIXTURE_HOST}`);
-  const filePath = resolveFixturePath(url.pathname);
-
-  if (!filePath) {
-    response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-    response.end('Not found');
-    return;
-  }
-
+async function serveFile(response, filePath, contentType = HTML) {
   try {
     const body = await readFile(filePath);
-    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    response.writeHead(200, contentType);
     response.end(body);
   } catch {
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     response.end('Not found');
   }
+}
+
+async function handleRequest(request, response) {
+  const url = new URL(request.url ?? '/', `http://${request.headers.host ?? DEFAULT_FIXTURE_HOST}`);
+  const pathname = url.pathname;
+
+  if (REDIRECTS.has(pathname)) {
+    response.writeHead(302, { location: REDIRECTS.get(pathname), 'cache-control': 'no-store' });
+    response.end();
+    return;
+  }
+
+  if (pathname === '/crawler/binary') {
+    response.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' });
+    response.end(Buffer.from([0x00, 0x01, 0x02, 0x03]));
+    return;
+  }
+
+  if (pathname === '/crawler/json') {
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    response.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  if (pathname === '/crawler/slow') {
+    // Deliberately never finishes within a short navigation timeout.
+    setTimeout(() => {
+      response.writeHead(200, HTML);
+      response.end('<!doctype html><title>Slow</title><h1>Slow</h1>');
+    }, 5000);
+    return;
+  }
+
+  if (pathname === '/crawler/missing') {
+    response.writeHead(404, HTML);
+    response.end('<!doctype html><title>Missing</title><h1>404</h1>');
+    return;
+  }
+
+  const filePath = resolveFixturePath(pathname);
+  if (!filePath) {
+    response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    response.end('Not found');
+    return;
+  }
+  const contentType = filePath.endsWith('.svg') ? { 'content-type': 'image/svg+xml' } : HTML;
+  await serveFile(response, filePath, contentType);
 }
 
 /**

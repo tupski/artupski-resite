@@ -211,6 +211,24 @@ Emitted by `ProcessManager` and `browserRuntime` using the shared `createEvent` 
 | `browser.session_started` | A controlled browser session launched. | `engine`, `sessionId` |
 | `browser.session_closed` | A controlled browser session closed. | `engine`, `sessionId` |
 
+### 3.3 Scanner (crawler) Event Keys (Phase 4)
+
+Emitted by the crawler application service (`src/services/scanner/crawlerService.ts`) using the shared `createEvent` envelope. Payload interfaces live in `src/services/infra/eventBus.ts`.
+
+| Event key | Emitted when | Payload highlights |
+| :--- | :--- | :--- |
+| `scanner.started` | A crawl begins. | `scanId`, `seedUrl`, `maxDepth`, `maxPages` |
+| `scanner.page_discovered` | A URL is added to the frontier. | `scanId`, `url`, `depth` |
+| `scanner.page_started` | Extraction of a dequeued page begins. | `scanId`, `url`, `depth` |
+| `scanner.page_loaded` | A page finished extracting successfully. | `scanId`, `url`, `statusCode`, `title`, `depth` |
+| `scanner.page_failed` | A single page failed but the crawl continues (recoverable). | `scanId`, `url`, `code`, `message` |
+| `scanner.progress` | Coalesced progress tick (at most once every N scanned pages - never per DOM node). | `scanId`, `pagesScanned`, `pagesDiscovered`, `progressPercentage`, `currentUrl` |
+| `scanner.cancelled` | A crawl was cancelled by the user. | `scanId`, `pagesScanned`, `pagesDiscovered` |
+| `scanner.completed` | A crawl finishes. | `scanId`, `pagesScanned`, `pagesDiscovered` |
+| `scanner.failed` | The crawl fails fatally. | `scanId`, `url`, `code`, `message` |
+
+`scanner.failed` is reserved for a **fatal** crawl failure (browser crash, protocol violation, unexpected worker exit); a recoverable page-level error is emitted as `scanner.page_failed` and the crawl continues. Progress is emitted on a bounded cadence (`progressEveryPages`), not once per page or per node.
+
 ---
 
 ## 4. Verbose Process Console Logging Architecture

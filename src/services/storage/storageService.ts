@@ -19,6 +19,7 @@ import { createStorageError } from './errors';
 import { runMigrations } from './migrations';
 import { createDefaultStorageFile, createMemoryStorageFile, type StorageFile } from './persistence/storageFile';
 import { ProjectRepository } from './repositories/projectRepository';
+import { ScanPageRepository } from './repositories/scanPageRepository';
 import { ScanRepository } from './repositories/scanRepository';
 import { SettingsRepository } from './repositories/settingsRepository';
 import { TechnologyRepository } from './repositories/technologyRepository';
@@ -28,6 +29,7 @@ export type StorageState = 'uninitialized' | 'initializing' | 'ready' | 'error';
 export interface StorageRepositories {
   projects: ProjectRepository;
   scans: ScanRepository;
+  pages: ScanPageRepository;
   technologies: TechnologyRepository;
   settings: SettingsRepository;
 }
@@ -52,6 +54,7 @@ function buildRepositories(context: StorageContext): StorageRepositories {
   return {
     projects: new ProjectRepository(context),
     scans: new ScanRepository(context),
+    pages: new ScanPageRepository(context),
     technologies: new TechnologyRepository(context),
     settings: new SettingsRepository(context)
   };

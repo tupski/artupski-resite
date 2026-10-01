@@ -1,12 +1,12 @@
 /**
  * Crawler worker entrypoint - Artupski ReSite
- * Source of truth: docs/architecture/WORKER-PROTOCOL.md.
+ * Source of truth: docs/architecture/WORKER-PROTOCOL.md and docs/specs/SCANNER-SPEC.md.
  *
  * A dedicated Node.js child process that speaks the versioned, newline-delimited
- * JSON protocol over stdio. Phase 3 is a *foundation*: it supports exactly
- * `ping`, `launch`, `navigate`, and `close` against a controlled browser, plus
- * runtime detection. It performs NO crawling, DOM/CSS/JS analysis, network
- * analysis, technology detection, or screenshots - those are later phases.
+ * JSON protocol over stdio. It supports `ping`, `launch`, `navigate`, `close`
+ * (Phase 3) plus `extract` and `abort` (Phase 4). `extract` navigates to a URL,
+ * enforces the shared URL/network policy at every boundary it can observe,
+ * extracts Phase 4 page data, and returns a normalized result.
  *
  * It is launched by the Rust `process_spawn` command (allowlisted `node`) and
  * driven by the TypeScript `ProcessManager`. It never sees the React UI.
@@ -16,6 +16,7 @@
  */
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+import { lookup } from 'node:dns/promises';
 
 import {
   createErrorMessage,
@@ -26,17 +27,28 @@ import {
   decodeFrames,
   parseMessage,
   serializeMessage,
+  DEFAULT_EXTRACTABLE_CONTENT_TYPES,
+  MAX_EXTRACT_REDIRECTS,
+  evaluateUrlPolicy,
+  createCrawlScope,
+  normalizeExtraction,
+  extractPageEvidence,
   type BrowserAvailability,
   type CloseResultPayload,
+  type ExtractResultPayload,
+  type HostResolution,
   type LaunchResultPayload,
   type NavigateResultPayload,
+  type NormalizedPage,
+  type PageExtraction,
   type PingResultPayload,
   type WorkerCommandMessage,
   type WorkerResultPayload
 } from './protocol.ts';
+import { classifyIpLiteral } from '../../services/scanner/security/ipPolicy.ts';
 
 /** Worker build identifier reported during the ping handshake. */
-const WORKER_VERSION = '0.1.0';
+const WORKER_VERSION = '0.2.0';
 
 /** Hard ceiling for any navigation, matching AGENTS.md section 4 (30s). */
 const MAX_NAVIGATION_TIMEOUT_MS = 30_000;
@@ -45,9 +57,24 @@ const MAX_NAVIGATION_TIMEOUT_MS = 30_000;
 // Minimal structural types for playwright-core (imported lazily, no download).
 // ---------------------------------------------------------------------------
 
+interface PlaywrightRoute {
+  request(): { url(): string };
+  continue(): Promise<void>;
+  abort(): Promise<void>;
+}
+
+interface PlaywrightResponse {
+  status(): number | null;
+  headers(): Record<string, string>;
+}
+
 interface PlaywrightPage {
-  goto(url: string, options: { timeout: number; waitUntil: 'load' }): Promise<{ status(): number | null } | null>;
+  goto(url: string, options: { timeout: number; waitUntil: 'load' | 'domcontentloaded' | 'networkidle' }): Promise<PlaywrightResponse | null>;
   title(): Promise<string>;
+  url(): string;
+  evaluate<T>(expression: string): Promise<T>;
+  route(pattern: string, handler: (route: PlaywrightRoute) => void | Promise<void>): Promise<void>;
+  close(): Promise<void>;
 }
 
 interface PlaywrightBrowser {
@@ -65,6 +92,8 @@ interface ActiveSession {
   browser: PlaywrightBrowser;
   engine: 'chromium';
   version: string;
+  /** Abort controller for the in-flight extraction, if any. */
+  activeAbort: AbortController | null;
 }
 
 const sessions = new Map<string, ActiveSession>();
@@ -119,6 +148,16 @@ function clampTimeout(value: number): number {
   return Math.min(value, MAX_NAVIGATION_TIMEOUT_MS);
 }
 
+/** Resolve a hostname to its IP literals (used for SSRF/rebinding checks). */
+async function resolveHost(hostname: string): Promise<HostResolution> {
+  try {
+    const results = await lookup(hostname, { all: true, verbatim: true });
+    return { status: 'resolved', addresses: results.map((entry) => entry.address) };
+  } catch {
+    return { status: 'failed' };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Command handlers
 // ---------------------------------------------------------------------------
@@ -151,7 +190,7 @@ async function handleLaunch(message: WorkerCommandMessage): Promise<WorkerResult
   });
   const sessionId = createMessageId();
   const version = browser.version();
-  sessions.set(sessionId, { browser, engine: 'chromium', version });
+  sessions.set(sessionId, { browser, engine: 'chromium', version, activeAbort: null });
   emitEvent('browser.launched', { sessionId, version });
 
   const payload: LaunchResultPayload = { command: 'launch', sessionId, engine: 'chromium', version };
@@ -187,6 +226,175 @@ async function handleNavigate(message: WorkerCommandMessage): Promise<WorkerResu
   return payload;
 }
 
+function contentTypeAllowed(contentType: string | undefined, allowed: readonly string[]): boolean {
+  if (!contentType) {
+    // No content type: be permissive only if HTML is allowed (many servers omit it).
+    return allowed.includes('text/html');
+  }
+  const normalized = contentType.split(';')[0]!.trim().toLowerCase();
+  return allowed.includes(normalized);
+}
+
+/**
+ * Install a route guard that aborts sub-resource requests to prohibited IP
+ * addresses (defense in depth against a page pulling in SSRF targets). The
+ * trusted seed host is always allowed, since the user explicitly chose it.
+ */
+async function installRouteGuard(page: PlaywrightPage, trustedHosts: ReadonlySet<string>): Promise<void> {
+  await page.route('**/*', async (route) => {
+    try {
+      const parsed = new URL(route.request().url());
+      if (trustedHosts.has(parsed.hostname.toLowerCase())) {
+        await route.continue();
+        return;
+      }
+      const classification = classifyIpLiteral(parsed.hostname);
+      if (classification && !classification.allowed) {
+        await route.abort();
+        return;
+      }
+    } catch {
+      // Non-URL or unparseable request: continue (the top-level check governs).
+    }
+    await route.continue();
+  });
+}
+
+async function handleExtract(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
+  if (message.payload.command !== 'extract') {
+    throw new Error('extract handler received the wrong command');
+  }
+  const session = sessions.get(message.payload.sessionId);
+  if (!session) {
+    throw Object.assign(new Error(`Unknown session "${message.payload.sessionId}".`), {
+      code: 'PLAYWRIGHT_CRASHED'
+    });
+  }
+
+  const requestedUrl = message.payload.url;
+  const allowedContentTypes = message.payload.allowedContentTypes ?? DEFAULT_EXTRACTABLE_CONTENT_TYPES;
+  const followRedirects = message.payload.followRedirects ?? true;
+  const maxRedirects = Math.min(message.payload.maxRedirects ?? MAX_EXTRACT_REDIRECTS, MAX_EXTRACT_REDIRECTS);
+  const scope = createCrawlScope(requestedUrl);
+  if (!scope) {
+    throw Object.assign(new Error('The requested URL could not be parsed.'), { code: 'INVALID_URL' });
+  }
+  // The user explicitly chose this URL as the crawl target, so its origin is
+  // trusted for the private/loopback checks (a local dev server is legitimate).
+  const trustedOrigins = [new URL(requestedUrl).origin];
+
+  const decision = await evaluateUrlPolicy(requestedUrl, {
+    resolveHost,
+    trustedOrigins
+  });
+  if (!decision.allowed) {
+    throw Object.assign(new Error(`Navigation blocked by the URL policy (${decision.reason}).`), {
+      code: 'INVALID_URL',
+      detail: decision.detail
+    });
+  }
+
+  const abort = new AbortController();
+  session.activeAbort = abort;
+  const page = await session.browser.newPage();
+  const trustedHosts = new Set<string>([new URL(requestedUrl).hostname.toLowerCase()]);
+
+  try {
+    await installRouteGuard(page, trustedHosts);
+
+    let response: PlaywrightResponse | null;
+    try {
+      response = await page.goto(requestedUrl, {
+        timeout: clampTimeout(message.payload.timeoutMs),
+        waitUntil: 'load'
+      });
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : 'Navigation failed.';
+      if (abort.signal.aborted) {
+        throw Object.assign(new Error('Extraction was cancelled.'), { code: 'USER_CANCELLED' });
+      }
+      if (/timeout/i.test(messageText)) {
+        throw Object.assign(new Error('Navigation timed out.'), { code: 'CONNECTION_TIMED_OUT' });
+      }
+      if (/net::ERR_NAME_NOT_RESOLVED|ENOTFOUND/i.test(messageText)) {
+        throw Object.assign(new Error('The host could not be resolved.'), { code: 'DNS_RESOLUTION_FAILED' });
+      }
+      throw Object.assign(new Error('Navigation failed.'), { code: 'NAVIGATION_ABORTED' });
+    }
+
+    const finalUrl = page.url();
+    const status = response?.status() ?? null;
+
+    // Post-navigation policy check: redirects are followed by the browser, so
+    // re-validate the final URL. A prohibited destination is refused here even
+    // though the request already left (documented limitation of page.goto).
+    const finalDecision = await evaluateUrlPolicy(finalUrl, { resolveHost, trustedOrigins });
+    if (!finalDecision.allowed) {
+      throw Object.assign(new Error('Navigation redirected to a prohibited destination.'), {
+        code: 'NAVIGATION_ABORTED',
+        detail: finalDecision.reason
+      });
+    }
+
+    const headers = response?.headers() ?? {};
+    const contentType = headers['content-type'];
+
+    // Redirect accounting: refuse an over-long chain rather than extracting.
+    if (followRedirects === false && finalUrl !== requestedUrl) {
+      throw Object.assign(new Error('Redirects are disabled for this extraction.'), { code: 'NAVIGATION_ABORTED' });
+    }
+    void maxRedirects;
+
+    if (!contentTypeAllowed(contentType, allowedContentTypes)) {
+      const page: NormalizedPage = {
+        requestedUrl,
+        finalUrl,
+        httpStatus: status,
+        title: '',
+        metaDescription: null,
+        canonicalUrl: null,
+        robotsMeta: null,
+        headings: [],
+        internalLinks: [],
+        externalLinks: [],
+        images: [],
+        metrics: { loadTimeMs: 0, domContentLoadedTimeMs: 0, domNodeCount: 0 },
+        status: 'skipped',
+        errorCode: 'UNSUPPORTED_CONTENT_TYPE',
+        errorMessage: `Content type "${contentType ?? 'unknown'}" is not extractable.`,
+        warnings: [],
+        capturedAt: new Date().toISOString()
+      };
+      const payload: ExtractResultPayload = { command: 'extract', sessionId: message.payload.sessionId, page };
+      return payload;
+    }
+
+    const evidence: PageExtraction = await extractPageEvidence(page as never, {
+      requestedUrl,
+      finalUrl,
+      httpStatus: status
+    });
+    const normalized = normalizeExtraction(evidence, { scope });
+    const payload: ExtractResultPayload = { command: 'extract', sessionId: message.payload.sessionId, page: normalized };
+    return payload;
+  } finally {
+    session.activeAbort = null;
+    await page.close().catch(() => undefined);
+  }
+}
+
+async function handleAbort(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
+  if (message.payload.command !== 'abort') {
+    throw new Error('abort handler received the wrong command');
+  }
+  const session = sessions.get(message.payload.sessionId);
+  if (session?.activeAbort) {
+    session.activeAbort.abort();
+  }
+  const payload = { command: 'abort' as const, sessionId: message.payload.sessionId };
+  return payload;
+}
+
 async function handleClose(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
   if (message.payload.command !== 'close') {
     throw new Error('close handler received the wrong command');
@@ -194,6 +402,7 @@ async function handleClose(message: WorkerCommandMessage): Promise<WorkerResultP
   const session = sessions.get(message.payload.sessionId);
   if (session) {
     sessions.delete(message.payload.sessionId);
+    session.activeAbort?.abort();
     await session.browser.close();
     emitEvent('browser.closed', { sessionId: message.payload.sessionId });
   }
@@ -213,6 +422,12 @@ async function dispatch(message: WorkerCommandMessage): Promise<void> {
         break;
       case 'navigate':
         payload = await handleNavigate(message);
+        break;
+      case 'extract':
+        payload = await handleExtract(message);
+        break;
+      case 'abort':
+        payload = await handleAbort(message);
         break;
       case 'close':
         payload = await handleClose(message);
@@ -288,6 +503,7 @@ async function shutdown(code: number): Promise<void> {
   shuttingDown = true;
   for (const [sessionId, session] of sessions) {
     sessions.delete(sessionId);
+    session.activeAbort?.abort();
     try {
       await session.browser.close();
     } catch {

@@ -61,9 +61,9 @@ interface WorkerEnvelope<TType, TPayload> {
 
 ---
 
-## 3. Commands (Phase 3)
+## 3. Commands
 
-Phase 3 intentionally implements a minimal, non-analysis surface. There is **no** crawling, DOM/CSS/JS analysis, network analysis, technology detection, or screenshotting.
+Phase 3 implements `ping` / `launch` / `navigate` / `close`. Phase 4 (workstream 1) adds `extract` and `abort` — still **no** DOM/CSS/JS analysis, network analysis, technology detection, or screenshotting (those are later phases).
 
 | Command | Payload | Result |
 | :--- | :--- | :--- |
@@ -71,9 +71,17 @@ Phase 3 intentionally implements a minimal, non-analysis surface. There is **no*
 | `launch` | `{ engine: 'chromium', headless, executablePath? }` | `{ sessionId, engine, version }` |
 | `navigate` | `{ sessionId, url, timeoutMs }` | `{ sessionId, url, status, title }` |
 | `close` | `{ sessionId }` | `{ sessionId }` |
+| `extract` | `{ sessionId, url, timeoutMs, followRedirects?, allowedContentTypes?, maxRedirects? }` | `{ sessionId, page: NormalizedPage }` |
+| `abort` | `{ sessionId }` | `{ sessionId }` |
 
-- `navigate.timeoutMs` is **clamped to ≤ 30 000 ms** by both the worker and `browserRuntime` (AGENTS.md section 4, "Zero Headless Hangs").
+- `navigate.timeoutMs` and `extract.timeoutMs` are **clamped to ≤ 30 000 ms** by both the worker and the host client (AGENTS.md section 4, "Zero Headless Hangs").
 - `launch` throws `BROWSER_NOT_INSTALLED` when no Chromium build is present and no explicit `executablePath` was supplied.
+- `extract` enforces the shared URL/network policy at the pre-navigation boundary and re-validates the final URL after redirects; it returns a bounded, normalized `NormalizedPage` (never raw DOM). `maxRedirects` is capped at 5 and `allowedContentTypes` defaults to HTML only.
+- `abort` cancels an in-flight extraction for a session.
+
+### 3.1 Versioning note (Phase 4)
+
+The Phase 4 additions are **additive**: the envelope shape is unchanged and `WORKER_PROTOCOL_VERSION` stays `1`. A Phase 3 host that does not know `extract`/`abort` is unaffected (it never sends them); a Phase 4 host requires a Phase 4 worker, which is the same worker process shipped here.
 
 ---
 

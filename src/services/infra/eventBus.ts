@@ -34,8 +34,12 @@ export type AppEventType =
   | 'scanner.started'
   | 'scanner.browser_started'
   | 'scanner.navigation_started'
-  | 'scanner.page_loaded'
   | 'scanner.page_discovered'
+  | 'scanner.page_started'
+  | 'scanner.page_loaded'
+  | 'scanner.page_failed'
+  | 'scanner.progress'
+  | 'scanner.cancelled'
   | 'scanner.completed'
   | 'scanner.failed'
   | 'technology.scan_started'
@@ -168,6 +172,83 @@ export interface BrowserSessionPayload extends BaseEventPayload {
   sessionId: string;
 }
 
+/** Scanner (crawler) payloads (Phase 4). */
+export interface ScannerStartedPayload extends BaseEventPayload {
+  domain: 'scanner';
+  scanId: string;
+  seedUrl: string;
+  maxDepth: number;
+  maxPages: number;
+}
+
+export interface ScannerPageDiscoveredPayload extends BaseEventPayload {
+  domain: 'scanner';
+  scanId: string;
+  url: string;
+  depth: number;
+}
+
+export interface ScannerPageLoadedPayload extends BaseEventPayload {
+  domain: 'scanner';
+  scanId: string;
+  url: string;
+  statusCode: number | null;
+  title: string;
+  depth: number;
+}
+
+export interface ScannerPageStartedPayload extends BaseEventPayload {
+  domain: 'scanner';
+  scanId: string;
+  url: string;
+  depth: number;
+}
+
+/** A single page failed but the crawl continues (recoverable page-level error). */
+export interface ScannerPageFailedPayload extends BaseEventPayload {
+  domain: 'scanner';
+  scanId: string;
+  url: string;
+  code: string;
+  message: string;
+}
+
+/**
+ * Coalesced crawl progress. Emitted at a bounded cadence (see the crawler
+ * service), never once per DOM node, so the UI is not flooded.
+ */
+export interface ScannerProgressPayload extends BaseEventPayload {
+  domain: 'scanner';
+  scanId: string;
+  pagesScanned: number;
+  pagesDiscovered: number;
+  /** 0..100, derived from scanned/max pages. */
+  progressPercentage: number;
+  currentUrl: string | null;
+}
+
+export interface ScannerCompletedPayload extends BaseEventPayload {
+  domain: 'scanner';
+  scanId: string;
+  pagesScanned: number;
+  pagesDiscovered: number;
+}
+
+export interface ScannerCancelledPayload extends BaseEventPayload {
+  domain: 'scanner';
+  scanId: string;
+  pagesScanned: number;
+  pagesDiscovered: number;
+}
+
+export interface ScannerFailedPayload extends BaseEventPayload {
+  domain: 'scanner';
+  scanId: string;
+  url: string;
+  code: string;
+  message: string;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
@@ -189,6 +270,15 @@ export interface AppEventPayloadMap {
   'browser.missing': BrowserMissingPayload;
   'browser.session_started': BrowserSessionPayload;
   'browser.session_closed': BrowserSessionPayload;
+  'scanner.started': ScannerStartedPayload;
+  'scanner.page_discovered': ScannerPageDiscoveredPayload;
+  'scanner.page_started': ScannerPageStartedPayload;
+  'scanner.page_loaded': ScannerPageLoadedPayload;
+  'scanner.page_failed': ScannerPageFailedPayload;
+  'scanner.progress': ScannerProgressPayload;
+  'scanner.cancelled': ScannerCancelledPayload;
+  'scanner.completed': ScannerCompletedPayload;
+  'scanner.failed': ScannerFailedPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;

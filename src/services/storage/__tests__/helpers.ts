@@ -11,6 +11,7 @@ import { MemoryStorageFile } from '../persistence/storageFile';
 import { createStorage, type StorageInstance } from '../storageService';
 import type { StorageContext } from '../context';
 import { ProjectRepository } from '../repositories/projectRepository';
+import { ScanPageRepository } from '../repositories/scanPageRepository';
 import { ScanRepository } from '../repositories/scanRepository';
 import { SettingsRepository } from '../repositories/settingsRepository';
 import { TechnologyRepository } from '../repositories/technologyRepository';
@@ -22,6 +23,7 @@ export interface TestStorage {
   context: StorageContext;
   projects: ProjectRepository;
   scans: ScanRepository;
+  pages: ScanPageRepository;
   technologies: TechnologyRepository;
   settings: SettingsRepository;
   /** Export current bytes (as the persisted database would be). */
@@ -46,6 +48,7 @@ function wrap(instance: StorageInstance, file: MemoryStorageFile): TestStorage {
     context,
     projects: new ProjectRepository(context),
     scans: new ScanRepository(context),
+    pages: new ScanPageRepository(context),
     technologies: new TechnologyRepository(context),
     settings: new SettingsRepository(context),
     exportBytes: () => db.export(),

@@ -160,3 +160,17 @@ The child-process boundary is deliberately narrow. The frontend cannot spawn an 
 - Every worker frame crossing the stdio boundary is validated (`workerProtocol.validateMessage`): envelope shape, integer protocol version, correlation id, known type, and a payload matching the type. Malformed frames produce `WORKER_PROTOCOL_VIOLATION`.
 - The worker and host share one protocol module, so the wire contract cannot drift.
 - The React UI never touches child processes or Playwright objects; it consumes `process.*` / `browser.*` events only.
+
+### 6.5 Crawler URL & Network Access Policy (Phase 4)
+
+The crawler enforces an explicit URL/network access policy (`src/services/scanner/security/`) at every navigation boundary it can observe. Hostname string checks are **not** relied upon.
+
+- **Shape**: only `http`/`https`, no embedded credentials, an allowlisted port set, and a bounded URL length.
+- **IP classification**: IP literals are parsed (including non-canonical IPv4 forms such as `2130706433` / `0177.0.0.1`, and IPv4-mapped IPv6) and rejected if loopback, private, link-local, unique-local, multicast, unspecified, reserved, or a cloud metadata-service address (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`).
+- **DNS**: a DNS-named host is resolved by the worker and rejected if **any** resolved address is prohibited; the browser's sub-resource routing is also pinned against prohibited IPs (defense in depth).
+- **Trusted seed origin**: a URL the user explicitly chose as the crawl target may be loopback/private (a local dev server is legitimate), so its origin is trusted for the private/loopback checks only. Metadata and link-local addresses remain blocked even then, and discovered links/redirects leaving the trusted origin are subject to the full policy.
+- **Redirects**: the final URL after redirects is re-validated; a prohibited destination aborts the extraction.
+
+**Documented limitations (do not overclaim):** this policy cannot guarantee arbitrary URLs are safe. A compromised DNS resolver, a proxy configured outside the app, or a target site issuing requests to third-party hosts from its own page JavaScript are outside what a URL policy can enforce. Top-level navigation is validated pre-navigation and post-redirect; a redirect that has already left the process cannot be recalled, so the post-navigation check refuses to extract from a prohibited destination rather than claiming the request never occurred. Query parameters and sensitive URL components are never logged.
+
+**UI seam (Phase 4 workstream 3):** the Scan screen runs crawls only through `src/services/scanner/scanService.ts`, which validates the target URL before touching the worker, resolves the owning project from the local database, and reuses the `BrowserRuntime` worker process. The React UI never constructs a URL policy, spawns a process, or bypasses the crawler service. Failures are surfaced to the user as a message plus suggested action (never a raw stack trace or worker output).

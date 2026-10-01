@@ -144,6 +144,37 @@ The default suite (`npm run test`) covers the Phase 3 foundation **without any b
 
 The **opt-in** smoke test (`src/workers/crawler/__tests__/workerSmoke.test.ts`) is the only test that launches a real Chromium. It is gated by `RUN_BROWSER_TESTS` and is skipped by default, so `npm run test` and CI never require a browser binary or an external website. It starts the local fixture server (`scripts/fixtureServer.mjs`, `127.0.0.1:9099`) and the real worker, then pings, launches, navigates to `http://127.0.0.1:9099/simple-page`, and closes cleanly.
 
+### 5.2 Phase 4 crawler core test tier
+
+The default suite covers the Phase 4 crawler core **without any browser download**:
+
+- `src/services/scanner/security/ipPolicy.test.ts` - IP-literal parsing (incl. non-canonical IPv4, IPv6 mappings) and range classification.
+- `src/services/scanner/security/urlPolicy.test.ts` - scheme/credential/port/length rejection, IP/DNS blocking, and the trusted-seed-origin rule.
+- `src/services/scanner/normalization.test.ts`, `crawlScope.test.ts`, `frontier.test.ts` - normalization, origin scope, and bounded traversal.
+- `src/services/scanner/extraction/normalize.test.ts`, `inPageExtractor.test.ts` - extraction normalization, size limits, and the self-contained in-page extractor run against jsdom.
+- `src/services/scanner/scannerWorkerClient.test.ts`, `src/services/infra/workerProtocol.extract.test.ts` - the `extract`/`abort` protocol surface via injected fakes.
+
+The **opt-in** `src/workers/crawler/__tests__/crawlerExtraction.e2e.test.ts` (gate `RUN_BROWSER_TESTS=1`) launches real Chromium against the local fixture server and exercises the essential end-to-end path: metadata/headings/links/images extraction, canonical resolution, in-scope redirect following, non-HTML skip, 404 extraction, navigation timeout, and a metadata-address redirect block.
+
+### 5.3 Phase 4 crawler persistence / lifecycle / orchestration test tier
+
+The default suite covers the Phase 4 workstream-2 additions **without any browser download**:
+
+- `src/services/storage/__tests__/scanPages.test.ts` - migration 002 registration/checksum/table+indexes, `ScanPageRepository` upsert/dedupe/counters/JSON round-trip, foreign-key integrity and cascades, and reopen persistence.
+- `src/services/storage/__tests__/scanProgress.test.ts` - `ScanRepository.updateProgress` clamping/partial updates and `findActive` / `findActiveByProject`.
+- `src/services/scanner/lifecycle.test.ts`, `crawlLimits.test.ts` - the pure scan state machine and documented hard-bound clamping.
+- `src/services/scanner/crawlerService.test.ts` - successful crawl, recoverable partial failures, fatal worker crash, cancellation with partial-progress retention, duplicate-scan prevention (in-process + persisted), cleanup/active-slot release, invalid seed, and page JSON round-trip (all via injected fakes + a real in-memory SQLite database).
+
+The **opt-in** `src/workers/crawler/__tests__/crawlerService.e2e.test.ts` (gate `RUN_BROWSER_TESTS=1`) launches real Chromium and drives the whole orchestration (frontier + worker client + real SQLite persistence + events + cancellation) against the local fixture server on **port 8000** (a dedicated port so it never contends with the workstream-1 extraction E2E on 4000 or the worker smoke test on 9099). It is skipped cleanly by default.
+
+### 5.4 Phase 4 crawler UI integration test tier (workstream 3)
+
+The default suite covers the UI seam **without any browser download**:
+
+- `src/stores/scanStore.test.ts` - the store lifecycle plus a full crawl run through `startScan()` against an injected fake browser runtime and a real in-memory SQLite database: it asserts the crawl's *real* counters (`pagesScanned`/`pagesDiscovered`), discovered URLs, completion status, and the honest runtime-unavailable failure state (no fabricated progress). `scanService` exposes `setScanRuntimeProviderForTests` / `resetScanServiceForTests` so the seam is testable without a Tauri shell.
+
+Port isolation for the three opt-in real-Chromium files: worker smoke `9099`, extraction E2E `4000`, orchestration E2E `8000`. They can be run together (`RUN_BROWSER_TESTS=1 npx vitest run src/workers/crawler`) without contending for a fixture port.
+
 Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):
 
 - `src/lib/url.test.ts` - URL normalization and validation.

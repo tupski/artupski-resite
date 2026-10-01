@@ -141,6 +141,16 @@ export class BrowserRuntime {
   }
 
   /**
+   * Expose the worker adapter so a crawl can drive the *same* worker process
+   * and session the runtime launched (Phase 4 UI wiring). This is service-to-
+   * service only: the React UI still never touches process internals. The
+   * adapter structurally satisfies `ScannerWorkerAdapter`.
+   */
+  getWorkerAdapter(): BrowserWorkerAdapter {
+    return this.adapter;
+  }
+
+  /**
    * Start the worker and probe browser availability. Idempotent: concurrent or
    * repeated calls share one promise. Never throws - a missing browser becomes
    * an honest `error` state with `BROWSER_NOT_INSTALLED`.

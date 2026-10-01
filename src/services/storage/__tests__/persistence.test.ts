@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEvent, eventBus } from '../../infra/eventBus';
+import { MIGRATIONS } from '../migrations';
 import { createStorage } from '../storageService';
 import { MemoryStorageFile } from '../persistence/storageFile';
 import { createTestStorage } from './helpers';
@@ -44,7 +45,7 @@ describe('persistence across reopen', () => {
 
     // Migrations must NOT re-run on an already-migrated database.
     const tracked = reopened.db.all<{ version: number }>('SELECT version FROM schema_migrations;');
-    expect(tracked).toHaveLength(1);
+    expect(tracked).toHaveLength(MIGRATIONS.length);
 
     await storage.close();
     await reopened.close();
@@ -83,8 +84,8 @@ describe('createStorage lifecycle', () => {
       onMigrationComplete: (migration) => completed.push(migration.version)
     });
 
-    expect(started).toEqual([1]);
-    expect(completed).toEqual([1]);
+    expect(started).toEqual([1, 2]);
+    expect(completed).toEqual([1, 2]);
     await instance.close();
   });
 

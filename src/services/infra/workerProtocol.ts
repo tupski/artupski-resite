@@ -21,6 +21,11 @@
 // these files via Node's native type stripping) can resolve the import chain.
 import { createProcessError, type ProcessErrorCode } from './processErrors.ts';
 import type { StructuredError } from './errors.ts';
+import type { NormalizedPage } from '../scanner/extraction/types.ts';
+
+// Re-exported so host consumers can type the `extract` result from the single
+// protocol module without reaching into the scanner internals.
+export type { NormalizedPage };
 
 /**
  * Integer protocol version. Bump only on a breaking wire-format change; the
@@ -36,8 +41,17 @@ export type WorkerMessageType = 'command' | 'result' | 'event' | 'log' | 'error'
 /** Browser engines the worker can control. Chromium-only for the Phase 3 MVP. */
 export type BrowserEngine = 'chromium';
 
-/** The closed set of operations the worker understands in Phase 3. */
-export type WorkerCommandName = 'ping' | 'launch' | 'navigate' | 'close';
+/** The closed set of operations the worker understands. */
+export type WorkerCommandName = 'ping' | 'launch' | 'navigate' | 'close' | 'extract' | 'abort';
+
+/** Default content types the crawler will extract; anything else is skipped. */
+export const DEFAULT_EXTRACTABLE_CONTENT_TYPES: readonly string[] = [
+  'text/html',
+  'application/xhtml+xml'
+];
+
+/** Hard ceiling on the number of redirects a single extraction may follow. */
+export const MAX_EXTRACT_REDIRECTS = 5;
 
 // ---------------------------------------------------------------------------
 // Command payloads (host -> worker)
@@ -68,11 +82,38 @@ export interface CloseCommandPayload {
   sessionId: string;
 }
 
+/**
+ * Navigate to `url`, extract Phase 4 page data, and return a normalized result.
+ * The worker validates every navigation/redirect boundary against the URL
+ * policy before the browser is allowed to reach it.
+ */
+export interface ExtractCommandPayload {
+  command: 'extract';
+  sessionId: string;
+  url: string;
+  /** Navigation timeout in ms. The worker clamps this to <= 30000. */
+  timeoutMs: number;
+  /** Whether redirects may be followed (each target is policy-checked). Default true. */
+  followRedirects?: boolean;
+  /** Content types eligible for extraction. Defaults to HTML only. */
+  allowedContentTypes?: string[];
+  /** Maximum redirects to follow. Defaults to and is capped at 5. */
+  maxRedirects?: number;
+}
+
+/** Cancel an in-flight extraction for a session. */
+export interface AbortCommandPayload {
+  command: 'abort';
+  sessionId: string;
+}
+
 export type WorkerCommandPayload =
   | PingCommandPayload
   | LaunchCommandPayload
   | NavigateCommandPayload
-  | CloseCommandPayload;
+  | CloseCommandPayload
+  | ExtractCommandPayload
+  | AbortCommandPayload;
 
 // ---------------------------------------------------------------------------
 // Result payloads (worker -> host)
@@ -114,11 +155,25 @@ export interface CloseResultPayload {
   sessionId: string;
 }
 
+export interface ExtractResultPayload {
+  command: 'extract';
+  sessionId: string;
+  /** Normalized, bounded page result (raw evidence is never sent to the host). */
+  page: NormalizedPage;
+}
+
+export interface AbortResultPayload {
+  command: 'abort';
+  sessionId: string;
+}
+
 export type WorkerResultPayload =
   | PingResultPayload
   | LaunchResultPayload
   | NavigateResultPayload
-  | CloseResultPayload;
+  | CloseResultPayload
+  | ExtractResultPayload
+  | AbortResultPayload;
 
 // ---------------------------------------------------------------------------
 // Event / log / error payloads
@@ -214,7 +269,7 @@ export function serializeMessage(message: WorkerMessage): string {
 
 const MESSAGE_TYPES: readonly WorkerMessageType[] = ['command', 'result', 'event', 'log', 'error'];
 
-const COMMAND_NAMES: readonly WorkerCommandName[] = ['ping', 'launch', 'navigate', 'close'];
+const COMMAND_NAMES: readonly WorkerCommandName[] = ['ping', 'launch', 'navigate', 'close', 'extract', 'abort'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -250,6 +305,21 @@ function validateCommandPayload(payload: unknown): boolean {
       );
     case 'close':
       return isNonEmptyString(payload.sessionId);
+    case 'extract':
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNonEmptyString(payload.url) &&
+        typeof payload.timeoutMs === 'number' &&
+        Number.isFinite(payload.timeoutMs) &&
+        (payload.followRedirects === undefined || typeof payload.followRedirects === 'boolean') &&
+        (payload.maxRedirects === undefined ||
+          (typeof payload.maxRedirects === 'number' && Number.isInteger(payload.maxRedirects))) &&
+        (payload.allowedContentTypes === undefined ||
+          (Array.isArray(payload.allowedContentTypes) &&
+            payload.allowedContentTypes.every((entry) => typeof entry === 'string')))
+      );
+    case 'abort':
+      return isNonEmptyString(payload.sessionId);
     default:
       return false;
   }
@@ -273,9 +343,43 @@ function validateResultPayload(payload: unknown): boolean {
       );
     case 'close':
       return isNonEmptyString(payload.sessionId);
+    case 'extract':
+      return isNonEmptyString(payload.sessionId) && isNormalizedPageShape(payload.page);
+    case 'abort':
+      return isNonEmptyString(payload.sessionId);
     default:
       return false;
   }
+}
+
+/**
+ * Structural check of a normalized page result. The full type lives in
+ * `extraction/types.ts`; this validates the fields the host relies on so a
+ * malformed worker result is rejected at the protocol boundary.
+ */
+function isNormalizedPageShape(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.requestedUrl === 'string' &&
+    typeof value.finalUrl === 'string' &&
+    (value.httpStatus === null || typeof value.httpStatus === 'number') &&
+    typeof value.title === 'string' &&
+    (value.metaDescription === null || typeof value.metaDescription === 'string') &&
+    (value.canonicalUrl === null || typeof value.canonicalUrl === 'string') &&
+    (value.robotsMeta === null || typeof value.robotsMeta === 'string') &&
+    Array.isArray(value.headings) &&
+    Array.isArray(value.internalLinks) &&
+    Array.isArray(value.externalLinks) &&
+    Array.isArray(value.images) &&
+    isRecord(value.metrics) &&
+    typeof value.status === 'string' &&
+    (value.errorCode === null || typeof value.errorCode === 'string') &&
+    (value.errorMessage === null || typeof value.errorMessage === 'string') &&
+    Array.isArray(value.warnings) &&
+    typeof value.capturedAt === 'string'
+  );
 }
 
 function validateEventPayload(payload: unknown): boolean {

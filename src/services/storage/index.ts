@@ -40,7 +40,12 @@ export {
 } from './migrations';
 
 export { ProjectRepository } from './repositories/projectRepository';
-export { ScanRepository, type UpdateScanStatusInput } from './repositories/scanRepository';
+export {
+  ScanRepository,
+  type UpdateScanStatusInput,
+  type UpdateScanProgressInput
+} from './repositories/scanRepository';
+export { ScanPageRepository, pathForUrl } from './repositories/scanPageRepository';
 export { TechnologyRepository } from './repositories/technologyRepository';
 export { SettingsRepository } from './repositories/settingsRepository';
 
@@ -55,5 +60,6 @@ export type {
   CreateProjectInput,
   CreateScanInput,
   CreateScanTechnologyInput,
-  UpdateProjectInput
+  UpdateProjectInput,
+  UpsertScanPageInput
 } from './types';

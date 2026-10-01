@@ -118,6 +118,34 @@ The following decisions were made during implementation and supersede the pre-im
 - **Potential Risks**: Target websites blocking headless user agents.
 - **Verification**: Scan a test URL and inspect returned DOM structure and asset inventory.
 
+### Phase 4 Implementation Notes (workstream 1, as built)
+This workstream delivers the crawler core only; persistence, lifecycle/orchestration, and UI are a later workstream.
+
+1. **Module naming**: the host client is `src/services/scanner/scannerWorkerClient.ts` (not `playwrightRunner.ts`); it wraps the existing `ProcessManager` and never spawns anything itself.
+2. **Security first**: `src/services/scanner/security/` implements an explicit URL/network policy (schemes, credentials, ports, URL length, IP-range classification incl. non-canonical IPv4 and IPv6 mappings, DNS resolution with ANY-prohibited-address rejection, and a trusted-seed-origin rule). Every navigation/redirect boundary the architecture can observe is validated; the residual limitations are documented in `SECURITY.md` section 6.5.
+3. **Extraction scope**: Phase 4 extracts page metadata/structure only (title, meta description, canonical, robots meta, headings, internal/external links, image refs + alt, basic metrics, timestamp). DOM snapshots, computed styles, HAR, screenshots, and assets remain later phases.
+4. **Protocol**: `extract` / `abort` are additive; `WORKER_PROTOCOL_VERSION` stays `1`.
+5. **No persistence**: page results are returned as normalized, bounded objects; storing them (`scan_pages`) is the later workstream's responsibility.
+
+### Phase 4 Implementation Notes (workstream 2, as built)
+
+This workstream adds persistence, the scan lifecycle/cancellation, event wiring, and the crawler application service. UI remains workstream 3.
+
+1. **Persistence**: a **new** migration `002_scan_pages.ts` (version `2`) creates `scan_pages` (child of `scans`, `ON DELETE CASCADE`) with a unique `(scan_id, url)` index; `001_init` is untouched. `ScanPageRepository` provides typed upsert/list/count APIs with bounded batch writes; `ScanRepository` gains `updateProgress()` and `findActive()` / `findActiveByProject()`. See `DATABASE.md` section 2.2.
+2. **Lifecycle & cancellation**: `src/services/scanner/lifecycle.ts` is a pure state machine over the persisted `scans.status` union (`pending → in_progress → completed | failed | cancelled`). The service refuses duplicate concurrent scans with `SCAN_ALREADY_RUNNING`; `cancel(scanId)` aborts the in-flight worker extraction, persists partial progress, records `cancelled`, and releases the run slot. A scan is only marked `completed` after the final page batch is written.
+3. **Events/errors**: `scanner.page_started`, `scanner.page_failed`, `scanner.progress`, and `scanner.cancelled` are added (see `EVENT-SYSTEM.md` section 3.3); `SCAN_ALREADY_RUNNING` is added to the taxonomy (`ERROR-HANDLING.md`). Recoverable page failures are distinguished from fatal scan failures.
+4. **Orchestration**: `src/services/scanner/crawlerService.ts` composes the workstream-1 frontier/scope/normalization + `scannerWorkerClient` + repositories + events + cancellation, with all limits clamped into documented hard bounds (`src/services/scanner/crawlLimits.ts`). Traversal is a sequential BFS (`maxConcurrency` is 1) because the worker holds a single abort controller per session. The frontend never touches Playwright/child processes.
+5. **UI**: out of scope (workstream 3); the scan route and its Start button remain unchanged.
+
+### Phase 4 Implementation Notes (workstream 3, as built)
+
+This final Phase 4 workstream wires the UI to the crawler, fixes the opt-in test flake, and finalizes the documentation. It adds **no** downstream features.
+
+1. **Orchestration seam**: `src/services/scanner/scanService.ts` is the single entry point the UI uses to run a crawl. It validates the target, resolves the owning project, launches a browser session through the existing `BrowserRuntime` (sharing its worker process / `ProcessManager`), runs the `CrawlerService`, exposes cancellation, and always closes the session. Failures are returned as typed `StructuredError`s, never thrown at the UI.
+2. **Store/UI**: `src/stores/scanStore.ts` mirrors the crawl's own `scanner.*` events into real progress, discovered pages, and an activity log (no fabricated percentages). `src/routes/ScanRoute.tsx` renders honest states, an actionable error alert, deliberate focus movement, and shows the multi-viewport controls disabled and labelled **Deferred** (they are not honored by the crawler yet). A project is auto-selected for the typed URL or can be created inline.
+3. **Scope**: page metadata/structure extraction only. Technology detection, responsive capture, authentication, screenshots/assets, HAR, blueprint/clone/project generation, and admin remain later phases.
+4. **Test determinism**: the three opt-in real-Chromium E2E files use distinct fixture ports (worker smoke `9099`, extraction `4000`, orchestration `8000`) so they no longer contend when run together.
+
 ---
 
 ## Phase 5: Authentication & Session Scanning

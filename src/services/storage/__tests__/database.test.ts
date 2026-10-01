@@ -69,11 +69,11 @@ describe('SqliteDatabase', () => {
     const names = tables.map((row) => row.name);
     expect(names).toContain('projects');
     expect(names).toContain('scans');
+    expect(names).toContain('scan_pages'); // added by Phase 4 (migration 002)
     expect(names).toContain('scan_technologies');
     expect(names).toContain('app_settings');
     expect(names).toContain('schema_migrations');
-    // Deferred tables must NOT exist in Phase 2.
-    expect(names).not.toContain('scan_pages');
+    // Tables owned by later phases must NOT exist yet.
     expect(names).not.toContain('scan_assets');
     expect(names).not.toContain('blueprints');
     expect(names).not.toContain('auth_sessions');

@@ -1,47 +1,186 @@
+import { useEffect, useMemo, useRef } from 'react';
 import { PageShell } from '../components/layout/PageShell';
 import { Panel } from '../components/ui/Panel';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
-import { StatusIndicator } from '../components/ui/StatusIndicator';
-import { SCAN_STATUS_LABEL } from '../types/scan';
+import { StatusIndicator, type StatusTone } from '../components/ui/StatusIndicator';
+import { IconAlert } from '../components/ui/icons';
+import { SCAN_STATUS_LABEL, type ScanStatus } from '../types/scan';
 import { useScanStore } from '../stores/scanStore';
+import { useProjectsStore } from '../stores/projectsStore';
 import { validateTargetUrl } from '../lib/url';
 
 /**
- * Scan configuration surface.
+ * Scan configuration + execution surface (UI-SPEC sections 2.1 and 2.2, subset).
  *
- * Phase 1 renders the configuration controls so the data model and ergonomics
- * are real, but the scan itself is disabled: the engine does not exist yet and
- * no progress is simulated (task sections 7 and 20).
+ * Phase 4 (workstream 3) wires this to the real crawler: Start delegates to the
+ * scan store/service and progress is driven by the crawl's own events. No
+ * percentage or counter is fabricated. Controls the crawler does not honor yet
+ * (viewports / responsive capture) are shown disabled and labelled deferred
+ * rather than pretending to work.
  */
+
+const STATUS_TONE: Record<ScanStatus, StatusTone> = {
+  idle: 'idle',
+  configuring: 'idle',
+  scanning: 'active',
+  completed: 'success',
+  failed: 'danger',
+  cancelled: 'warning',
+};
+
+function clamp(value: number, min: number, max: number): number {
+  if (Number.isNaN(value)) {
+    return min;
+  }
+  return Math.min(max, Math.max(min, value));
+}
+
 export function ScanRoute() {
-  const configuration = useScanStore((state) => state.configuration);
-  const updateConfiguration = useScanStore((state) => state.updateConfiguration);
   const targetUrl = useScanStore((state) => state.targetUrl);
   const setTargetUrl = useScanStore((state) => state.setTargetUrl);
+  const projectId = useScanStore((state) => state.projectId);
+  const setProjectId = useScanStore((state) => state.setProjectId);
+  const setProjectTitle = useScanStore((state) => state.setProjectTitle);
+  const configuration = useScanStore((state) => state.configuration);
+  const updateConfiguration = useScanStore((state) => state.updateConfiguration);
   const status = useScanStore((state) => state.status);
+  const progress = useScanStore((state) => state.progress);
+  const logs = useScanStore((state) => state.logs);
+  const discoveredPages = useScanStore((state) => state.discoveredPages);
+  const error = useScanStore((state) => state.error);
+  const startScan = useScanStore((state) => state.startScan);
+  const cancelScan = useScanStore((state) => state.cancelScan);
+
+  const projects = useProjectsStore((state) => state.projects);
+  const loadProjects = useProjectsStore((state) => state.loadProjects);
+  const createProject = useProjectsStore((state) => state.createProject);
+  const mutating = useProjectsStore((state) => state.mutating);
+
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
+  const previousStatus = useRef<ScanStatus>(status);
 
   const validation = validateTargetUrl(targetUrl);
+  const scanning = status === 'scanning';
+
+  useEffect(() => {
+    void loadProjects();
+  }, [loadProjects]);
+
+  // Keep the selected project in sync with the typed URL so scanning never
+  // silently targets the wrong project. A matching project is auto-selected;
+  // an unmatched URL clears the selection (the user must create the project).
+  const validUrl = validation.valid ? validation.url : null;
+  const matchedProject = useMemo(
+    () => (validUrl ? projects.find((project) => project.targetUrl === validUrl) : undefined),
+    [projects, validUrl]
+  );
+
+  useEffect(() => {
+    if (matchedProject) {
+      if (projectId !== matchedProject.id) {
+        setProjectId(matchedProject.id);
+        setProjectTitle(matchedProject.name);
+      }
+    } else if (projectId !== null) {
+      setProjectId(null);
+      setProjectTitle('');
+    }
+  }, [matchedProject, projectId, setProjectId, setProjectTitle]);
+
+  // Move focus deliberately as the lifecycle changes so keyboard users are not
+  // stranded: to Cancel when a scan starts, to the result region when it ends.
+  useEffect(() => {
+    const previous = previousStatus.current;
+    previousStatus.current = status;
+    if (status === previous) {
+      return;
+    }
+    if (status === 'scanning') {
+      cancelRef.current?.focus();
+    } else if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+      statusRef.current?.focus();
+    }
+  }, [status]);
+
+  const canStart = validation.valid && projectId !== null && !scanning && !mutating;
+  const needsProject = validation.valid && projectId === null;
+
+  async function handleCreateProject() {
+    if (!validation.valid) {
+      return;
+    }
+    const name = validation.host;
+    const created = await createProject({ name, targetUrl: validation.url });
+    if (created) {
+      const project = useProjectsStore
+        .getState()
+        .projects.find((candidate) => candidate.targetUrl === validation.url);
+      if (project) {
+        setProjectId(project.id);
+        setProjectTitle(project.name);
+      }
+    }
+  }
+
+  const progressLabel = scanning
+    ? `${progress.pagesScanned} scanned · ${progress.pagesDiscovered} discovered`
+    : status === 'completed'
+      ? `${progress.pagesScanned} pages scanned`
+      : 'No crawl in progress';
 
   return (
-    <PageShell title="Scan" description="Configure the reverse-engineering crawl.">
+    <PageShell title="Scan" description="Crawl a target website and extract page data.">
       <div className="flex flex-col gap-4">
         <Panel
           title="Target"
-          actions={<StatusIndicator tone="idle" label={SCAN_STATUS_LABEL[status]} />}
+          actions={
+            <StatusIndicator
+              tone={STATUS_TONE[status]}
+              label={SCAN_STATUS_LABEL[status]}
+              pulse={scanning}
+            />
+          }
         >
-          <Input
-            label="Target website URL"
-            placeholder="https://example.com"
-            value={targetUrl}
-            inputMode="url"
-            autoComplete="off"
-            spellCheck={false}
-            inputClassName="font-mono text-code"
-            onChange={(event) => setTargetUrl(event.target.value)}
-            error={targetUrl.trim().length > 0 && !validation.valid ? validation.message : null}
-          />
+          <div className="flex flex-col gap-3">
+            <Input
+              label="Target website URL"
+              placeholder="https://example.com"
+              value={targetUrl}
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
+              inputClassName="font-mono text-code"
+              onChange={(event) => setTargetUrl(event.target.value)}
+              disabled={scanning}
+              error={targetUrl.trim().length > 0 && !validation.valid ? validation.message : null}
+            />
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2 text-caption text-text-secondary">
+                <span className="text-text-muted">Project</span>
+                {matchedProject ? (
+                  <span className="truncate text-text-primary">{matchedProject.name}</span>
+                ) : (
+                  <span className="text-text-muted">
+                    {validation.valid ? 'No project for this URL yet' : 'Enter a valid URL first'}
+                  </span>
+                )}
+              </div>
+              {needsProject ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={mutating}
+                  onClick={() => void handleCreateProject()}
+                >
+                  {mutating ? 'Creating…' : 'Create project for this URL'}
+                </Button>
+              ) : null}
+            </div>
+          </div>
         </Panel>
 
         <Panel title="Crawl configuration">
@@ -52,32 +191,51 @@ export function ScanRoute() {
               min={1}
               max={5}
               value={configuration.maxDepth}
+              disabled={scanning}
               onChange={(event) =>
                 updateConfiguration({ maxDepth: clamp(Number(event.target.value), 1, 5) })
               }
-              hint="1 to 5"
+              hint="1 to 5 link levels from the seed"
             />
             <Input
               label="Max pages"
               type="number"
               min={1}
-              max={500}
+              max={200}
               value={configuration.maxPages}
+              disabled={scanning}
               onChange={(event) =>
-                updateConfiguration({ maxPages: clamp(Number(event.target.value), 1, 500) })
+                updateConfiguration({ maxPages: clamp(Number(event.target.value), 1, 200) })
               }
-              hint="Upper bound on pages crawled"
+              hint="Hard upper bound on crawled pages"
             />
           </div>
 
-          <fieldset className="mt-4">
-            <legend className="mb-2 text-caption font-medium text-text-secondary">Viewports</legend>
-            <div className="flex flex-wrap gap-3">
+          <label className="mt-4 flex items-center gap-2 text-body text-text-secondary">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-brand"
+              checked={configuration.headless}
+              disabled={scanning}
+              onChange={(event) => updateConfiguration({ headless: event.target.checked })}
+            />
+            Run headless
+          </label>
+
+          <fieldset
+            className="mt-4 rounded border border-border-subtle p-3"
+            disabled
+            aria-describedby="viewports-deferred-note"
+          >
+            <legend className="px-1 text-caption font-medium text-text-secondary">
+              Viewports <Badge tone="neutral">Deferred</Badge>
+            </legend>
+            <div className="flex flex-wrap gap-3 pt-1 opacity-60">
               {(
                 [
                   ['desktop', 'Desktop 1440×900'],
                   ['tablet', 'Tablet 768×1024'],
-                  ['mobile', 'Mobile 375×667']
+                  ['mobile', 'Mobile 375×667'],
                 ] as const
               ).map(([key, label]) => (
                 <label key={key} className="flex items-center gap-2 text-body text-text-secondary">
@@ -85,41 +243,144 @@ export function ScanRoute() {
                     type="checkbox"
                     className="h-3.5 w-3.5 accent-brand"
                     checked={configuration.viewports[key]}
-                    onChange={(event) =>
-                      updateConfiguration({
-                        viewports: { ...configuration.viewports, [key]: event.target.checked }
-                      })
-                    }
+                    disabled
+                    readOnly
                   />
                   {label}
                 </label>
               ))}
             </div>
+            <p id="viewports-deferred-note" className="pt-2 text-caption text-text-muted">
+              Multi-viewport capture is not part of this phase, so these options do not affect the
+              crawl. They are shown for continuity only.
+            </p>
           </fieldset>
-
-          <label className="mt-4 flex items-center gap-2 text-body text-text-secondary">
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 accent-brand"
-              checked={configuration.headless}
-              onChange={(event) => updateConfiguration({ headless: event.target.checked })}
-            />
-            Run headless
-          </label>
         </Panel>
 
-        <Panel
-          title="Execute"
-          actions={<Badge tone="warning">Not available in this phase</Badge>}
-        >
-          <div className="flex items-center justify-between gap-4">
-            <p className="max-w-md text-caption text-text-muted">
-              The Playwright scanning engine is introduced in a later phase. This screen
-              configures scan parameters only; no crawl is performed yet.
-            </p>
-            <Button type="button" variant="primary" disabled>
-              Start scan
-            </Button>
+        <Panel title="Execute">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-md text-caption text-text-muted">
+                Crawls the target and stores page metadata for the owning project. One crawl runs at
+                a time.
+              </p>
+              <div className="flex items-center gap-2">
+                {scanning ? (
+                  <Button
+                    ref={cancelRef}
+                    variant="danger"
+                    onClick={() => void cancelScan()}
+                  >
+                    Cancel scan
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={!canStart}
+                  onClick={() => void startScan()}
+                >
+                  {scanning ? 'Scanning…' : 'Start scan'}
+                </Button>
+              </div>
+            </div>
+
+            {error ? (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded border border-danger/40 bg-danger/10 px-3 py-2"
+              >
+                <span className="mt-0.5 text-danger" aria-hidden="true">
+                  <IconAlert size={15} />
+                </span>
+                <div className="flex flex-col gap-0.5">
+                  <p className="text-body text-text-primary">{error.message}</p>
+                  <p className="text-caption text-text-secondary">{error.suggestedAction}</p>
+                </div>
+              </div>
+            ) : null}
+
+            <div
+              ref={statusRef}
+              tabIndex={-1}
+              aria-live="polite"
+              className="flex flex-col gap-2 outline-none"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-caption text-text-secondary">{progressLabel}</span>
+                {scanning ? (
+                  <span className="font-mono text-code text-text-muted">
+                    {progress.currentUrl ?? 'starting…'}
+                  </span>
+                ) : null}
+              </div>
+              <div
+                role="progressbar"
+                aria-label="Crawl progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={progress.percentage}
+                className="h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated"
+              >
+                <div
+                  className={`h-full rounded-full transition-[width] duration-200 ${
+                    status === 'failed' ? 'bg-danger' : status === 'cancelled' ? 'bg-warning' : 'bg-brand'
+                  }`}
+                  style={{ width: `${progress.percentage}%` }}
+                />
+              </div>
+            </div>
+
+            {logs.length > 0 || discoveredPages.length > 0 ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1">
+                  <span className="text-caption font-medium text-text-secondary">
+                    Activity ({logs.length})
+                  </span>
+                  <ul
+                    aria-label="Scan activity log"
+                    aria-live="polite"
+                    className="h-40 overflow-y-auto rounded border border-border-subtle bg-base p-2 font-mono text-code"
+                  >
+                    {logs.length === 0 ? (
+                      <li className="text-text-muted">No activity yet.</li>
+                    ) : (
+                      logs.map((entry) => (
+                        <li
+                          key={entry.id}
+                          className={
+                            entry.level === 'error'
+                              ? 'text-danger'
+                              : entry.level === 'warn'
+                                ? 'text-warning'
+                                : 'text-text-secondary'
+                          }
+                        >
+                          <span className="text-text-muted">{formatTime(entry.timestamp)} </span>
+                          {entry.message}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-caption font-medium text-text-secondary">
+                    Discovered pages ({discoveredPages.length})
+                  </span>
+                  <ul className="h-40 overflow-y-auto rounded border border-border-subtle bg-base p-2 font-mono text-code">
+                    {discoveredPages.length === 0 ? (
+                      <li className="text-text-muted">None yet.</li>
+                    ) : (
+                      discoveredPages.map((url) => (
+                        <li key={url} className="truncate text-text-secondary" title={url}>
+                          {url}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </div>
+              </div>
+            ) : null}
           </div>
         </Panel>
       </div>
@@ -127,9 +388,10 @@ export function ScanRoute() {
   );
 }
 
-function clamp(value: number, min: number, max: number): number {
-  if (Number.isNaN(value)) {
-    return min;
+function formatTime(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return '--:--:--';
   }
-  return Math.min(max, Math.max(min, value));
+  return date.toLocaleTimeString();
 }

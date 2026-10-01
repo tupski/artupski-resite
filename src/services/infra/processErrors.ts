@@ -25,6 +25,8 @@ export type ProcessErrorCode =
 export interface ProcessErrorContext {
   message?: string;
   details?: Record<string, unknown>;
+  /** Override the default suggested action for this code. */
+  suggestedAction?: string;
   cause?: unknown;
 }
 
@@ -67,7 +69,7 @@ export function createProcessError(
     recoverable: code !== 'WORKER_PROTOCOL_VIOLATION',
     retryable,
     details: context.details,
-    suggestedAction: SUGGESTED_ACTION[code],
+    suggestedAction: context.suggestedAction ?? SUGGESTED_ACTION[code],
     cause: context.cause
   });
 }

@@ -499,3 +499,36 @@ function extractRuntimeGlobals() {
 4. **Infinite Scroll Handling**:
    - Scroll incrementally down page height (`window.scrollBy(0, window.innerHeight)`).
    - Cap auto-scroll limit at max 5 viewports or max 5 seconds elapsed.
+
+---
+
+## 7. Phase 4 Implementation Notes (as built)
+
+Phase 4 delivers a **page crawler and metadata/structure extractor**, not the full analyzer pipeline sketched in sections 1 and 5. This section records what is actually implemented so the rest of the document is read as the long-term target, not the current behavior.
+
+### 7.1 Crawl scope & traversal (as built)
+- **Strategy**: sequential breadth-first (`maxConcurrency` is `1`). The worker holds a single abort controller per browser session, so concurrent extractions on one session are unsafe. See `src/services/scanner/frontier.ts`.
+- **Scope**: internal means same **origin** (scheme + host + port) as the seed, optionally including subdomains and constrained to a base path (`src/services/scanner/crawlScope.ts`). Scheme/port differences are treated as cross-origin/external. External links are catalogued but never enqueued.
+- **Normalization**: fragments stripped; tracking params (`utm_*`, `fbclid`, `gclid`, `ref`, `mc_eid`, `_ga`) removed; remaining query params sorted; trailing slashes stripped for non-root paths (`src/services/scanner/normalization.ts`).
+- **Limits**: every limit is clamped into documented hard bounds by `src/services/scanner/crawlLimits.ts` (maxPages ≤ 200, maxDepth ≤ 6, navigation timeout ≤ 30 s, redirects ≤ 5, retries ≤ 3).
+- **Not implemented from section 2.2**: sitemap/`robots.txt` discovery, `robots.txt` honoring, and the pause/resume lifecycle from section 4.1.
+
+### 7.2 Extraction schema (as built)
+Extraction produces a bounded `NormalizedPage` (`src/services/scanner/extraction/types.ts`): `requestedUrl`, `finalUrl`, `httpStatus`, `title`, `metaDescription`, `canonicalUrl`, `robotsMeta`, `headings[]`, `internalLinks[]`, `externalLinks[]`, `images[]` (src + alt + internal flag), `metrics` (load / DOMContentLoaded / DOM node count), per-page `status` (`completed | failed | timeout | skipped`), `errorCode`, `errorMessage`, `warnings[]`, and `capturedAt`. Hard size caps live in `src/services/scanner/extraction/limits.ts`.
+
+**Deliberately NOT extracted in Phase 4** (later phases): serialized DOM snapshots, computed styles/CSS rules, runtime JS globals, HAR/network records, screenshots, and downloaded assets. The `ScannedPageModel`/`DOMNodeSnapshot`/`ScriptResourceModel`/`StyleResourceModel`/`NetworkRequestModel`/`AssetModel` shapes in section 3 remain the target for those phases.
+
+### 7.3 Network-access policy (as built)
+Every navigation boundary the architecture can observe is validated by `src/services/scanner/security/` (schemes, credentials, ports, URL length, IP-range classification incl. non-canonical IPv4 / IPv6 mappings, DNS resolution with any-prohibited-address rejection, and a trusted-seed-origin rule). The worker re-validates the final URL after redirects and pins sub-resource routing against prohibited IPs. The residual limitations are documented in `docs/security/SECURITY.md` section 6.5.
+
+### 7.4 Lifecycle, cancellation & persistence (as built)
+- A pure state machine (`src/services/scanner/lifecycle.ts`) over `scans.status` (`pending → in_progress → completed | failed | cancelled`); one crawl at a time (`SCAN_ALREADY_RUNNING`).
+- `src/services/scanner/crawlerService.ts` orchestrates frontier + worker client + persistence + events; page results are buffered and written in bounded batches; a scan is marked `completed` only after the final batch is written.
+- Cancellation aborts the in-flight extraction, keeps partial progress, and records `cancelled`.
+- Page results persist to the `scan_pages` table (migration `002`); see `docs/architecture/DATABASE.md` section 2.2.
+- The UI drives this through `src/services/scanner/scanService.ts` (workstream 3); see `docs/design/UI-SPEC.md` section 6.
+
+### 7.5 Deviations from this specification
+- Sections 1, 5, and 6 describe the eventual DOM/CSS/JS/network/asset/screenshot pipeline and anti-bot evasion; Phase 4 implements only the crawl + metadata extraction subset above.
+- Multi-viewport capture (section 4.2 `viewportProfiles`) is **not** honored; the UI exposes the viewport controls as disabled/deferred.
+- Authentication (`authStorageStatePath`) and screenshots/HAR are later phases.

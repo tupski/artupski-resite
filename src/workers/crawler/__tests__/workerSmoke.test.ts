@@ -31,7 +31,11 @@ import {
 
 const RUN_BROWSER_TESTS = process.env.RUN_BROWSER_TESTS === '1' || process.env.RUN_BROWSER_TESTS === 'true';
 
-const FIXTURE_URL = 'http://127.0.0.1:9099';
+// Dedicated port so this file never contends with the Phase 4 extraction E2E
+// (which binds 4000) or the orchestration E2E (which binds 8000) when the
+// opt-in browser tests run together in the same Vitest process pool.
+const FIXTURE_PORT = 9099;
+const FIXTURE_URL = `http://127.0.0.1:${FIXTURE_PORT}`;
 
 interface Harness {
   child: ChildProcessWithoutNullStreams;
@@ -93,7 +97,9 @@ function startWorker(): Harness {
 /** Start the real fixture server script and wait until it accepts connections. */
 async function startFixtureServerProcess(): Promise<ChildProcess> {
   const script = join(dirname(fileURLToPath(import.meta.url)), '../../../../scripts/fixtureServer.mjs');
-  const child = spawn(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [script, '--port', String(FIXTURE_PORT)], {
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
 
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {

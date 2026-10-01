@@ -13,9 +13,9 @@ import { useScanStore } from '../stores/scanStore';
 /**
  * Initial workspace (UI-SPEC section 2.1 subset).
  *
- * Phase 1 provides URL entry with validation and a real empty state. Scanning
- * itself is not implemented, so the primary action transitions to the Scan
- * route rather than faking progress.
+ * Provides URL entry with validation and a real empty state. The primary action
+ * carries the target URL to the Scan route, where the crawler actually runs;
+ * this view never fakes progress.
  */
 export function HomeRoute() {
   const navigate = useNavigate();
@@ -43,10 +43,7 @@ export function HomeRoute() {
       description="Reverse-engineer a website into a blueprint, then a full project."
     >
       <div className="flex flex-col gap-4">
-        <Panel
-          title="New project"
-          actions={<Badge tone="warning">Scanner available in a later phase</Badge>}
-        >
+        <Panel title="New project" actions={<Badge tone="brand">Crawler ready</Badge>}>
           <form onSubmit={handleSubmit} className="flex flex-col gap-3" noValidate>
             <Input
               label="Target website URL"

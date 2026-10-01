@@ -318,5 +318,18 @@ The Phase 1 shell implements a subset of this specification and resolves a few a
 
 1. **Theme default**: Section 3.1 marks Dark as default; the implementation defaults to `dark` and persists the choice under the `resite.settings` localStorage key (Zustand `persist`), including a `system` option.
 2. **Tokens**: Section 3.1 hex values are encoded as RGB channel CSS variables in `src/styles/tokens.css` and consumed via Tailwind utilities (`bg-base`, `text-text-primary`, `border-border-subtle`, etc.). Components must not hardcode colors.
-3. **Scan lifecycle**: Section 4's `scanStore` shape is implemented (`idle | configuring | scanning | auth_required | completed | failed`). Phase 1 renders configuration controls only; the scan action is disabled and no progress is simulated.
+3. **Scan lifecycle**: Section 4's `scanStore` shape is implemented. Phase 1 rendered configuration controls only with the scan action disabled. **Phase 4 (workstream 3) wires it to the real crawler**: the store lifecycle is `idle | configuring | scanning | completed | failed | cancelled` (mirroring the crawl outcome), the Start button runs a real crawl, progress comes from the crawl's own events (never fabricated), and `auth_required` is deferred to the authentication phase. See section 7.
 4. **Fonts**: `Inter` and `JetBrains Mono` are declared in the Tailwind font stack but are not bundled; the system fallbacks render until self-hosted fonts are introduced in a later phase.
+
+---
+
+## 7. Phase 4 Scan Screen (as built)
+
+The Scan route (`src/routes/ScanRoute.tsx`) implements the configuration + execution subset of section 2.1/2.2 and is wired to the real crawler through `src/services/scanner/scanService.ts`.
+
+- **Target**: URL entry with validation; the owning project is auto-selected from the typed URL or can be created inline ("Create project for this URL"). Start is enabled only when the URL is valid, a project is resolved, and no crawl is running.
+- **Configuration**: Max crawl depth (1-5) and Max pages (1-200) map to the crawler's clamped limits; the Run-headless toggle is honored. **Viewports are shown disabled and labelled `Deferred`** because multi-viewport capture is not part of Phase 4 (responsive analysis is a later phase) - they do not affect the crawl.
+- **States**: honest `Idle | Ready | Scanning | Completed | Failed | Cancelled`; a `role="alert"` error surface shows the message and suggested action (never a raw stack trace).
+- **Progress & console**: a real progress bar (`aria-valuenow`) plus scanned/discovered counts from the frontier, a bounded live activity log (`aria-live="polite"`), and a discovered-pages list. Nothing is simulated.
+- **Keyboard & focus**: deliberate focus movement - to **Cancel scan** when a crawl starts, and to the result/progress region when it settles. All controls are keyboard-operable with visible labels.
+- **Deferred**: authentication modal (section 2.3), the multi-stage stepper, screenshots/assets, and technology/responsive tabs remain later phases and are not shown.

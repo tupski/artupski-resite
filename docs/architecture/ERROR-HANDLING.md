@@ -9,8 +9,10 @@ System failure modes taxonomy, structured error schemas, recovery strategies, an
 | Code Domain | Error Code | Category | Root Cause |
 |---|---|---|---|
 | `NET_` | `INVALID_URL` | Network / Input | Malformed or unreachable protocol scheme. |
+| `NET_` | `URL_POLICY_VIOLATION` | Network / Input | Target is outside the crawler access policy (private/loopback/link-local/metadata address, credentials, port, or scheme). |
 | `NET_` | `DNS_RESOLUTION_FAILED` | Network | Hostname cannot be resolved by OS DNS. |
 | `NET_` | `CONNECTION_TIMED_OUT` | Network | Target server did not respond within timeout window. |
+| `NET_` | `UNSUPPORTED_CONTENT_TYPE` | Network / Input | The target is not an HTML page and cannot be extracted. |
 | `NET_` | `SSL_CERTIFICATE_INVALID` | Network / TLS | Expired, self-signed, or untrusted certificate. |
 | `BROWSER_` | `PLAYWRIGHT_CRASHED` | Automation | Browser process terminated abnormally (OOM / OS signal). |
 | `BROWSER_` | `NAVIGATION_ABORTED` | Automation | Page redirected repeatedly or navigation loop detected. |
@@ -35,6 +37,7 @@ System failure modes taxonomy, structured error schemas, recovery strategies, an
 | `DB_` | `MIGRATION_FAILED` | Persistence | A schema migration threw and was rolled back. |
 | `DB_` | `MIGRATION_CHECKSUM_MISMATCH` | Persistence | An applied migration no longer matches its recorded checksum (fatal; refuses to continue). |
 | `PROC_` | `USER_CANCELLED` | Lifecycle | User aborted scan or generation task via UI. |
+| `PROC_` | `SCAN_ALREADY_RUNNING` | Lifecycle | A scan was requested while another scan is still live (one crawl at a time). |
 | `PROC_` | `PROCESS_SPAWN_FAILED` | Process | The worker process could not be started (e.g. Node missing, spawn rejected). |
 | `PROC_` | `PROCESS_TIMEOUT` | Process | A worker operation exceeded its startup or communication timeout. |
 | `PROC_` | `PROCESS_EXITED_UNEXPECTEDLY` | Process | The worker exited on its own (crash/OOM/signal) without a managed shutdown. |
@@ -159,3 +162,20 @@ When process aborts (cancelled or fatal crash):
 3. **Database State Consistency**:
    - Update `scans` table: set `status = 'cancelled'` and `completed_at = CURRENT_TIMESTAMP`.
    - Flush pending logs in memory buffer to `process_logs` table before releasing connection pool.
+
+### 4.2 Phase 4 Crawl Lifecycle, Cancellation & Partial Scans (as built)
+
+The crawler application service (`src/services/scanner/crawlerService.ts`) owns the scan lifecycle for one crawl. Transitions are enforced by a pure state machine (`src/services/scanner/lifecycle.ts`) over the persisted `scans.status` union:
+
+```
+pending ──start──▶ in_progress ──┬─ success ─▶ completed
+                                 ├─ partial page failures ─▶ completed
+                                 ├─ fatal failure ─▶ failed
+                                 └─ cancel ─▶ cancelled
+```
+
+- `completed` / `failed` / `cancelled` are terminal; a completed scan is never marked failed/cancelled, and vice versa. `SCAN_ALREADY_RUNNING` is returned when a second scan is requested while one is live (in-process or persisted).
+- **Recoverable vs fatal**: a network/timeout/unsupported-content failure is a *page-level* error (persisted as a failed page, `scanner.page_failed` emitted, crawl continues). A fatal worker/browser failure (`PLAYWRIGHT_CRASHED`, `WORKER_PROTOCOL_VIOLATION`, `PROCESS_EXITED_UNEXPECTEDLY`, `PROCESS_SPAWN_FAILED`, `PROCESS_TIMEOUT`, `BROWSER_NOT_INSTALLED`) stops the crawl and records the scan as `failed`.
+- **Cancellation**: `cancel(scanId)` sets a cooperative flag and calls the worker's `abort` for the in-flight session; the loop stops, persists whatever pages were already captured (partial progress is never discarded), records `cancelled`, and releases the active-run slot. Shutting the worker process down is owned by the layer that started it.
+- **Ordering guarantee**: a scan is only ever marked `completed` *after* the final page batch is written, so a reported-complete scan is durably persisted. Unexpected worker termination still yields a consistent terminal scan outcome (`failed`).
+- **Partial/failed scans**: useful progress is retained; an incomplete scan is never reported as completed. Structured logs never include credentials, sensitive page contents, or unrestricted worker output, and no raw stack trace is surfaced to the UI (it is retained only on the `StructuredError`).

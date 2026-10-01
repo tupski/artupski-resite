@@ -31,7 +31,7 @@ describe('migration runner', () => {
 
     expect(second.applied).toEqual([]);
     expect(second.alreadyApplied).toEqual(first.applied.map((m) => m.version));
-    expect(readAppliedMigrations(db)).toHaveLength(1);
+    expect(readAppliedMigrations(db)).toHaveLength(MIGRATIONS.length);
     db.close();
   });
 

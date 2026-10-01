@@ -11,7 +11,18 @@
  * strings verbatim - the application treats them as opaque UTC strings and
  * never mixes in ISO-8601 `T`/`Z` values on write.
  */
-import type { AppSetting, Project, ProjectStatus, Scan, ScanStatus, ScanTechnology } from '../../types/models';
+import type {
+  AppSetting,
+  Project,
+  ProjectStatus,
+  Scan,
+  ScanPage,
+  ScanPageHeading,
+  ScanPageImage,
+  ScanPageStatus,
+  ScanStatus,
+  ScanTechnology
+} from '../../types/models';
 
 export type SqlPrimitive = string | number | Uint8Array | null;
 export type SqlParams = SqlPrimitive[];
@@ -40,6 +51,34 @@ export interface ScanRow {
   started_at: string;
   completed_at: string | null;
   error_details: string | null;
+}
+
+/** Raw `scan_pages` row shape as returned by sql.js (migration 002). */
+export interface ScanPageRow {
+  id: string;
+  scan_id: string;
+  url: string;
+  final_url: string;
+  path: string;
+  depth: number;
+  http_status: number | null;
+  title: string | null;
+  meta_description: string | null;
+  canonical_url: string | null;
+  robots_meta: string | null;
+  status: string;
+  error_code: string | null;
+  error_message: string | null;
+  load_time_ms: number | null;
+  dom_content_loaded_time_ms: number | null;
+  dom_node_count: number | null;
+  headings: string | null;
+  internal_links: string | null;
+  external_links: string | null;
+  images: string | null;
+  warnings: string | null;
+  captured_at: string;
+  created_at: string;
 }
 
 /** Raw `scan_technologies` row shape as returned by sql.js. */
@@ -98,6 +137,49 @@ export function toScan(row: ScanRow): Scan {
   };
 }
 
+/** Parse a JSON text column into a bounded array, tolerating a null/corrupt value. */
+function parseJsonArray<T>(value: string | null): T[] {
+  if (value === null || value.length === 0) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    // A corrupt JSON column must never break a read; surface an empty list.
+    return [];
+  }
+}
+
+export function toScanPage(row: ScanPageRow): ScanPage {
+  return {
+    id: row.id,
+    scanId: row.scan_id,
+    url: row.url,
+    finalUrl: row.final_url,
+    path: row.path,
+    depth: row.depth,
+    httpStatus: row.http_status,
+    title: row.title,
+    metaDescription: row.meta_description,
+    canonicalUrl: row.canonical_url,
+    robotsMeta: row.robots_meta,
+    status: row.status as ScanPageStatus,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    loadTimeMs: row.load_time_ms,
+    domContentLoadedTimeMs: row.dom_content_loaded_time_ms,
+    domNodeCount: row.dom_node_count,
+    headings: parseJsonArray<ScanPageHeading>(row.headings),
+    internalLinks: parseJsonArray<string>(row.internal_links),
+    externalLinks: parseJsonArray<string>(row.external_links),
+    images: parseJsonArray<ScanPageImage>(row.images),
+    warnings: parseJsonArray<string>(row.warnings),
+    capturedAt: row.captured_at,
+    createdAt: row.created_at
+  };
+}
+
 export function toScanTechnology(row: ScanTechnologyRow): ScanTechnology {
   return {
     id: row.id,
@@ -149,6 +231,38 @@ export interface CreateScanInput {
   status?: ScanStatus;
   depthLimit?: number;
   pageLimit?: number;
+  /**
+   * Optional caller-supplied id. The crawler service generates this so the scan
+   * id is known (and can be subscribed to) before the row is written; the
+   * repository falls back to `crypto.randomUUID()`.
+   */
+  id?: string;
+}
+
+/** A page result ready to persist. `url` is the canonical dedupe key per scan. */
+export interface UpsertScanPageInput {
+  scanId: string;
+  url: string;
+  finalUrl: string;
+  path: string;
+  depth: number;
+  httpStatus: number | null;
+  title: string | null;
+  metaDescription: string | null;
+  canonicalUrl: string | null;
+  robotsMeta: string | null;
+  status: ScanPageStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  loadTimeMs: number | null;
+  domContentLoadedTimeMs: number | null;
+  domNodeCount: number | null;
+  headings: ScanPageHeading[];
+  internalLinks: string[];
+  externalLinks: string[];
+  images: ScanPageImage[];
+  warnings: string[];
+  capturedAt: string;
 }
 
 export interface CreateScanTechnologyInput {

@@ -42,7 +42,17 @@ The Phase 2 local storage foundation is implemented in `src/services/storage/`. 
 `projects`, `scans`, `scan_technologies` (per section 3) and `app_settings` (`key TEXT PRIMARY KEY`, `value TEXT`, `updated_at`) - the latter is an addition driven by PLAN.md Phase 2 ("settings") and is documented as such. Indexes: `idx_projects_status`, `idx_projects_updated_at`, `idx_scans_project_id`, `idx_scan_tech_scan_id`.
 
 #### Deferred tables (intentionally NOT created in Phase 2)
-`scan_pages`, `scan_assets`, `blueprints`, `auth_sessions`. These arrive with their owning phases and are not omissions.
+`scan_assets`, `blueprints`, `auth_sessions`. These arrive with their owning phases and are not omissions. (`scan_pages` is added by migration `002` in Phase 4 - see section 2.2.)
+
+### 2.2 Phase 4 Implementation Note (workstream 2, as built)
+
+Phase 4 adds the per-page persistence the crawler needs. It is delivered as a **new, versioned migration** (`src/services/storage/migrations/002_scan_pages.ts`, version `2`); `001_init` is never edited (its recorded checksum must stay stable).
+
+- **New table `scan_pages`** (child of `scans`, `ON DELETE CASCADE`). Columns: `id`, `scan_id`, `url`, `final_url`, `path`, `depth`, `http_status`, `title`, `meta_description`, `canonical_url`, `robots_meta`, `status` (`CHECK IN ('completed','failed','timeout','skipped')`), `error_code`, `error_message`, `load_time_ms`, `dom_content_loaded_time_ms`, `dom_node_count`, `headings` (JSON), `internal_links` (JSON), `external_links` (JSON), `images` (JSON), `warnings` (JSON), `captured_at`, `created_at`.
+- **Adaptation from section 3 (documented, not silent)**: the `scan_pages` sketch in section 3 carried `content_type`, `screenshot_path`, `dom_snapshot_path`, and `har_path`. Phase 4 extracts page metadata/structure only, so those columns are intentionally **not** created (no speculative columns); they arrive with the responsive/assets/HAR phases. `path` is derived from the URL and kept for indexable path lookups.
+- **Indexes**: `idx_scan_pages_scan_id`, `idx_scan_pages_url`, `idx_scan_pages_path`, `idx_scan_pages_status`, plus a **unique** `idx_scan_pages_scan_url (scan_id, url)` so re-visiting a URL updates its record instead of duplicating it (bounded retries / partial re-runs stay consistent).
+- **Repositories**: `ScanPageRepository` (`src/services/storage/repositories/scanPageRepository.ts`) owns `scan_pages`; `ScanRepository` gains `updateProgress()` (counter updates) and `findActive()` / `findActiveByProject()` (live-scan detection for duplicate-start prevention). `ScanPageRepository.upsertMany()` writes a batch inside a single transaction and persists once (bounded writes), rather than one full-database export per page.
+- **Partial/failed scans**: a page that could not be fetched is persisted with `status` `failed`/`timeout`/`skipped` and never `completed`; a cancelled or failed scan keeps the pages it already captured. A scan is only marked `completed` after the final page batch is written.
 
 ---
 

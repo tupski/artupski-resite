@@ -95,6 +95,16 @@ Phase 3 established the process boundary and a **launch/navigate-only** browser 
 - **Worker**: `src/workers/crawler/index.ts` runs via Node's native TypeScript stripping (`--experimental-strip-types`) and only supports `ping` / `launch` / `navigate` / `close`.
 - **Packaging limitation (deferred)**: the worker script and the Playwright browser are **not** bundled into the release artifact in Phase 3. Dev runs use source; release packaging (bundling the worker + installing the browser) is deferred to a later phase.
 
+### 5.2 Phase 4 Crawler & Scan UI (as built)
+
+Phase 4 turns the launch/navigate foundation into a working page crawler and wires it to the Scan screen. It extracts **page metadata/structure only** - no DOM snapshots, computed styles, HAR, screenshots, or assets (later phases).
+
+- **Extraction & worker**: the worker (`src/workers/crawler/index.ts`) adds `extract`/`abort`; `extract` enforces the shared URL/network policy at the pre-navigation and post-redirect boundaries, pins sub-resource routing against prohibited IPs, and returns a bounded, normalized `NormalizedPage` (`src/services/scanner/extraction/`). See `docs/specs/SCANNER-SPEC.md` section 7.
+- **Orchestration**: `src/services/scanner/crawlerService.ts` composes the frontier/scope/normalization + `scannerWorkerClient` + repositories + events + cancellation; `crawlLimits.ts` clamps all limits into hard bounds; `lifecycle.ts` is a pure scan state machine.
+- **Persistence**: `scan_pages` (migration `002`) via `ScanPageRepository`; `scans` gains progress counters and live-scan queries. See `docs/architecture/DATABASE.md` section 2.2.
+- **UI seam**: `src/services/scanner/scanService.ts` is the only module the UI uses to run a crawl. It validates the target, resolves the project, launches the shared browser session through `BrowserRuntime`, runs the crawl, and exposes cancellation. `src/stores/scanStore.ts` mirrors the crawl's own `scanner.*` events into real progress; `src/routes/ScanRoute.tsx` renders honest lifecycle states. The React UI still never touches Playwright or child processes - it goes through this service and consumes events.
+- **Documented limitation (unchanged)**: packaging the worker + Chromium into the release artifact is still deferred; the crawler requires the desktop runtime (the browser preview reports an honest "desktop application required" state).
+
 ---
 
 ## 6. Frontend Skill Requirement
