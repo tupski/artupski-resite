@@ -1,0 +1,90 @@
+# Architecture Specification - Artupski ReSite
+
+## 1. System Overview
+Artupski ReSite is a desktop application combining a Tauri 2 native layer with a TypeScript/React user interface. Core business logic runs in TypeScript inside the desktop runtime or background worker processes, while Rust provides OS integration, filesystem access, child process management, and high-performance native bridges.
+
+```
++-----------------------------------------------------------------------+
+|                         Tauri 2 Frontend                              |
+|   React 18/19 | TypeScript | Zustand | React Router | Tailwind CSS    |
++-----------------------------------+-----------------------------------+
+                                    | (IPC / Events / Commands)
++-----------------------------------+-----------------------------------+
+|                        Tauri Rust Native Core                         |
+|   OS Shell | FS Access | SQLite Native Driver | Child Process Manager |
++-----------------------------------+-----------------------------------+
+                                    | (Child Process IPC / stdio)
++-----------------------------------+-----------------------------------+
+|                     Background Workers & Engines                      |
+|   Playwright Engine | AI Provider Client | Code Generation Pipeline   |
++-----------------------------------------------------------------------+
+```
+
+---
+
+## 2. Layer Separation Model
+
+### Layer 1: Static Clone
+- Downloads exact static files (raw HTML, CSS, JavaScript, fonts, SVGs, images).
+- Resolves relative URLs to local file paths.
+- Serves static snapshot locally via internal HTTP server for exact 1:1 preview.
+
+### Layer 2: Website Blueprint
+- Normalizes parsed DOM and layout data into intermediate JSON schema.
+- Structures routing topology, design tokens (colors, typography, spacing), component trees, input forms, and data contracts.
+- Independent of output target framework.
+
+### Layer 3: Full Project
+- Consumes Blueprint and user configurations.
+- Synthesizes full-stack source code (components, hooks, state, routing, asset bundling).
+- Emits structured codebase ready to run (`package.json`, Vite config, Tailwind config, source files).
+
+---
+
+## 3. Subsystem Architecture
+
+### 3.1 Scanner Engine
+- Controls Playwright browser automation instances (Chromium, Firefox, WebKit).
+- Collects DOM tree snapshots, computed styles, runtime JS variables, network HAR logs, and page screenshots.
+- Manages authentication sessions via cookie extraction, storage state injection, or interactive login forms.
+
+### 3.2 AI Engine
+- Interfaces with OpenAI-compatible REST API endpoints.
+- Structures prompts for component extraction, blueprint generation, code conversion, and test generation.
+- Handles token streaming, schema validation via JSON-mode/Zod, and retry policies.
+
+### 3.3 Clone Engine
+- Processes network responses and DOM assets.
+- Sanitizes file paths, handles asset deduplication, and writes clean local directories.
+
+### 3.4 Project Generator
+- Template-driven code generation engine.
+- Transforms blueprint component trees into idiomatic React components, Tailwind utility classes, and TypeScript interfaces.
+
+### 3.5 Local Storage Subsystem
+- SQLite embedded database.
+- Stores project metadata, scan runs, captured assets, blueprints, settings, and logs.
+
+### 3.6 Infrastructure Subsystem
+- **EventBus**: Asynchronous event dispatch for UI updates (scan progress, generation logs, process exits).
+- **Logger**: Centralized logging emitting structured JSON logs to both UI console and file storage.
+- **ProcessManager**: Manages life cycles of child processes (Playwright workers, dev preview servers).
+
+---
+
+## 4. Rust vs TypeScript Boundary
+- **Rust Responsibility**: Window management, OS-level file system I/O, SQLite database driver initialization, native menu handling, and spawn/kill operations for child processes.
+- **TypeScript Responsibility**: All business logic, DOM parsing rules, UI state management, scan configuration, AI prompt orchestration, code synthesis algorithms, and view layer rendering.
+
+---
+
+## 5. Playwright Integration Model
+- Playwright runs as a dedicated Node.js child process managed by the TypeScript/Rust infrastructure.
+- Communication via JSON-RPC over stdio or WebSocket IPC.
+- Supports multi-viewport rendering (`375x667` mobile, `768x1024` tablet, `1920x1080` desktop).
+- Captures full-page screenshots and element-level bounding boxes for visual verification.
+
+---
+
+## 6. Frontend Skill Requirement
+- Any frontend implementation or UI refactoring task MUST adhere to `C:\Users\Kakarama Room\.agents\skills\anti-ui-slop\SKILL.md`.

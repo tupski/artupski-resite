@@ -1,0 +1,57 @@
+# Artupski ReSite — Documentation
+
+This folder contains all project documentation, organized by category. For project-level
+guidelines and history, see the root files: [`AGENTS.md`](../AGENTS.md),
+[`CONTRIBUTING.md`](../CONTRIBUTING.md), and [`CHANGELOG.md`](../CHANGELOG.md).
+
+## Product
+
+| Document | Description |
+| :--- | :--- |
+| [`PRD.md`](product/PRD.md) | Product requirements: goals, audience, and scope. |
+| [`PLAN.md`](product/PLAN.md) | Phased rollout and development roadmap. |
+| [`TODO.md`](product/TODO.md) | Task backlog and outstanding work. |
+
+## Architecture
+
+| Document | Description |
+| :--- | :--- |
+| [`ARCHITECTURE.md`](architecture/ARCHITECTURE.md) | System topology, layers, and module ownership. |
+| [`ARCHITECTURE-REVIEW.md`](architecture/ARCHITECTURE-REVIEW.md) | Review and recommendations on the architecture. |
+| [`TECH-STACK.md`](architecture/TECH-STACK.md) | Frameworks, tooling, and technology choices. |
+| [`EVENT-SYSTEM.md`](architecture/EVENT-SYSTEM.md) | Event taxonomy and messaging design. |
+| [`ERROR-HANDLING.md`](architecture/ERROR-HANDLING.md) | Error handling strategy and conventions. |
+| [`DATABASE.md`](architecture/DATABASE.md) | Schema, tables, relations, and indexing. |
+
+## Specs
+
+| Document | Description |
+| :--- | :--- |
+| [`SCANNER-SPEC.md`](specs/SCANNER-SPEC.md) | Scanner engine specification. |
+| [`TECHNOLOGY-DETECTION.md`](specs/TECHNOLOGY-DETECTION.md) | Technology detection rules and heuristics. |
+| [`AUTH-SCANNING.md`](specs/AUTH-SCANNING.md) | Authenticated scanning flows. |
+| [`CLONE-SPEC.md`](specs/CLONE-SPEC.md) | Site cloning specification. |
+| [`BLUEPRINT-SPEC.md`](specs/BLUEPRINT-SPEC.md) | Blueprint data model and output format. |
+| [`PROJECT-GENERATOR-SPEC.md`](specs/PROJECT-GENERATOR-SPEC.md) | Project generator specification. |
+| [`ADMIN-SPEC.md`](specs/ADMIN-SPEC.md) | Admin requirements specification. |
+| [`AI-SPEC.md`](specs/AI-SPEC.md) | AI engine specification. |
+
+## Design
+
+| Document | Description |
+| :--- | :--- |
+| [`UI-SPEC.md`](design/UI-SPEC.md) | Screens, design tokens, and component hierarchy. |
+| [`RESPONSIVE-SPEC.md`](design/RESPONSIVE-SPEC.md) | Responsive behavior and breakpoints. |
+
+## Security
+
+| Document | Description |
+| :--- | :--- |
+| [`SECURITY.md`](security/SECURITY.md) | Security model and threat considerations. |
+| [`PRIVACY.md`](security/PRIVACY.md) | Privacy policy and data handling. |
+
+## Development
+
+| Document | Description |
+| :--- | :--- |
+| [`TESTING.md`](dev/TESTING.md) | Testing strategy and guidelines. |
