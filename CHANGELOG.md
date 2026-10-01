@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+Phase 2 - local storage foundation: a real, persisted SQLite database behind a typed repository layer.
+
+- **Engine**: `sql.js` (SQLite 3 compiled to WebAssembly) so the same engine runs in the Tauri webview and under Vitest/jsdom; documented deviation from the `better-sqlite3`/Kysely suggestion in `TECH-STACK.md`.
+- **Rust boundary**: `src-tauri/src/storage.rs` exposes three sandboxed commands (`storage_database_location`, `storage_read_database`, `storage_write_database`) for the single `app.db` file in the app-local-data directory. Atomic temp-file + rename writes, a 64 MiB cap, and an app-local-data containment check. Rust owns no schema, migrations, or CRUD, and exposes no generic SQL. CSP `script-src` gains `'wasm-unsafe-eval'` only.
+- **Storage layer**: `src/services/storage/` - sql.js driver with runtime-aware WASM `locateFile`, `SqliteDatabase` wrapper (`exec`/`run`/`all`/`get`/`transaction`/`export`/`close`), `StorageFile` abstraction (`NativeStorageFile` IPC, `MemoryStorageFile`), and typed repositories for projects, scans, scan technologies, and settings.
+- **Migrations**: ordered, checksum-verified, transactional runner with a `schema_migrations` ledger; `MIGRATION_CHECKSUM_MISMATCH` refuses to continue. `001_init` creates `projects`, `scans`, `scan_technologies`, and `app_settings` plus four indexes.
+- **Lifecycle**: `initializeStorage()` runs non-blocking from the app root, emitting `storage.initializing` / `storage.migration_started` / `storage.migration_completed` / `storage.ready` / `storage.migration_failed`, and exposes `getStorageState()` for honest UI gating.
+- **Application layer**: `projectService` (URL validation, storage-path derivation) and `projectsStore` (transient list/status state).
+- **UI**: the Projects route now reads the real database (loading, empty, error, and not-ready states, a minimal create form, and delete) with no fabricated data.
+- **Errors/Events**: new storage error codes in `ERROR-HANDLING.md` and a `storage` event domain in `EVENT-SYSTEM.md`.
+- **Tooling**: `sql.js` + `@types/sql.js`; `npm run test:storage`.
+- **Docs**: implementation notes added to `DATABASE.md`, `TECH-STACK.md`, `EVENT-SYSTEM.md`, `ERROR-HANDLING.md`, `SECURITY.md`, `PLAN.md`, and `TESTING.md`.
+
+### Deferred (not in Phase 2)
+`scan_pages`, `scan_assets`, `blueprints`, and `auth_sessions` tables; scanning/crawling, technology detection, responsive capture, authentication/session encryption, blueprint generation, AI, clone generation, project generator, and admin remain unimplemented.
+
+### Phase 1
 Phase 1 foundation - runnable Tauri 2 + React desktop application shell.
 
 - **Desktop shell**: Tauri 2 project (`src-tauri/`) with a minimal native layer exposing only two read-only commands (`app_info`, `runtime_info`); no business logic in Rust. Capability set limited to `core:default` (no filesystem, shell, or process permissions).

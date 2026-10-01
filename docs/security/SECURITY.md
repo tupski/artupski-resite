@@ -105,6 +105,27 @@ $$\text{Sandbox Root} = \text{AppData/Local/ArtupskiReSite/projects/}\{project\_
 
 ---
 
+## 5.3 Local Database File I/O (Phase 2)
+
+The local SQLite database (`app.db`) is accessed through a deliberately narrow Rust boundary (`src-tauri/src/storage.rs`):
+
+- **Fixed target, no caller path**: the frontend never supplies a path. Rust resolves `<app_local_data_dir>/app.db` via `app.path().app_local_data_dir()` (never a hardcoded drive/user path).
+- **Containment check**: the directory is created and canonicalized, and the resolved target is verified to remain a direct child of the canonical app-local-data directory before any read or write.
+- **Atomic, capped writes**: writes go to a temp file (`app.db.tmp`) which is flushed, synced, and then renamed over the target. Payloads are capped at 64 MiB.
+- **No generic SQL**: Rust owns no schema, migrations, or CRUD and exposes **no** `execute_sql`/arbitrary-SQL command. The typed repositories in TypeScript are the only SQL authors.
+
+### 5.4 WASM SQLite Engine & CSP (documented deviation)
+
+Phase 2 uses `sql.js` (SQLite 3 compiled to WebAssembly) as the database engine, chosen so the same engine runs in the Tauri webview and under Vitest/jsdom. Instantiating WASM requires the `'wasm-unsafe-eval'` source expression. To honor the principle of least privilege, `'wasm-unsafe-eval'` is added to the `script-src` directive **only** in `src-tauri/tauri.conf.json`; no other CSP directive is broadened:
+
+```
+script-src 'self' 'wasm-unsafe-eval'
+```
+
+This permits compiling the bundled `sql-wasm.wasm` and does not enable general `eval()` of JavaScript. If the engine is ever replaced with a native driver, `'wasm-unsafe-eval'` should be removed from the CSP.
+
+---
+
 ## 6. Subprocess Execution Security Rules
 
 ProcessManager spawns node processes, Playwright headless browser instances, and Vite build processes.

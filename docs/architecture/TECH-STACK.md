@@ -19,7 +19,9 @@
 
 ### Local Persistence
 - **SQLite**: Embedded database used for metadata, scan runs, asset registries, blueprint JSON trees, and application settings.
-- **Prisma or Kysely / better-sqlite3**: Structured queries with strict TypeScript typing.
+- **`sql.js` (SQLite 3 compiled to WebAssembly) - as built in Phase 2**: structured queries with strict TypeScript typing through typed repositories. This supersedes the earlier `Prisma or Kysely / better-sqlite3` suggestion: the engine must run inside the Tauri webview *and* under Vitest/jsdom without a native build step. It is still SQLite 3.
+- **Rust file boundary**: `src-tauri/src/storage.rs` provides sandboxed atomic read/write for the single `app.db` file (no schema/CRUD, no generic SQL). See `DATABASE.md` section 2.1.
+- **`test:storage`**: `vitest run src/services/storage` exercises the storage layer against isolated in-memory databases.
 
 ---
 

@@ -17,12 +17,18 @@ export type EventDomain =
   | 'blueprint'
   | 'clone'
   | 'project'
+  | 'storage'
   | 'app';
 
 /** Canonical event keys, following the `<domain>.<action_or_state>` taxonomy. */
 export type AppEventType =
   | 'app.started'
   | 'app.theme_changed'
+  | 'storage.initializing'
+  | 'storage.ready'
+  | 'storage.migration_started'
+  | 'storage.migration_completed'
+  | 'storage.migration_failed'
   | 'scanner.started'
   | 'scanner.browser_started'
   | 'scanner.navigation_started'
@@ -69,10 +75,45 @@ export interface ThemeChangedPayload extends BaseEventPayload {
   resolved: 'light' | 'dark';
 }
 
+export interface StorageInitializingPayload extends BaseEventPayload {
+  domain: 'storage';
+}
+
+export interface StorageReadyPayload extends BaseEventPayload {
+  domain: 'storage';
+  databaseLocation: string;
+  appliedMigrations: number[];
+}
+
+export interface StorageMigrationStartedPayload extends BaseEventPayload {
+  domain: 'storage';
+  version: number;
+  name: string;
+}
+
+export interface StorageMigrationCompletedPayload extends BaseEventPayload {
+  domain: 'storage';
+  version: number;
+  name: string;
+  appliedCount: number;
+}
+
+export interface StorageMigrationFailedPayload extends BaseEventPayload {
+  domain: 'storage';
+  version: number | null;
+  code: string;
+  message: string;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
   'app.theme_changed': ThemeChangedPayload;
+  'storage.initializing': StorageInitializingPayload;
+  'storage.ready': StorageReadyPayload;
+  'storage.migration_started': StorageMigrationStartedPayload;
+  'storage.migration_completed': StorageMigrationCompletedPayload;
+  'storage.migration_failed': StorageMigrationFailedPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;

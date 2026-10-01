@@ -26,6 +26,24 @@ PRAGMA cache_size = -64000;   -- 64MB cache
 PRAGMA busy_timeout = 5000;
 ```
 
+### 2.1 Phase 2 Implementation Note (as built)
+
+The Phase 2 local storage foundation is implemented in `src/services/storage/`. It supersedes the pre-implementation wording above where they conflict:
+
+- **Engine**: **`sql.js`** (SQLite 3 compiled to WebAssembly), not `better-sqlite3`/Kysely. Rationale: the same engine must run inside the Tauri webview **and** in Vitest/jsdom without a native build step. It is still SQLite 3.
+- **Engine limitations (documented deviation)**: the following pragmas from the block above do **not** apply to the WASM engine and are deliberately not issued: `journal_mode = WAL` (single in-memory connection; no concurrent writers), `synchronous`, `mmap_size`, and `cache_size`. `foreign_keys = ON`, `busy_timeout = 5000`, and `temp_store = MEMORY` are applied.
+- **`foreign_keys` lifecycle**: `PRAGMA foreign_keys` is enabled **after** migrations create every table, because SQLite only backfills a foreign key's parent index from data present at `CREATE TABLE` time. Note that sql.js 1.12.0's `Database.export()` resets connection pragmas, so the storage layer restores `foreign_keys = ON` after every export and on every open.
+- **Location**: the database file is `app.db` inside the app-local-data directory (`AppData/Local/<identifier>` on Windows), resolved by Rust via `app.path().app_local_data_dir()`. No path is ever supplied by the frontend.
+- **File I/O**: Rust exposes exactly three sandboxed commands in `src-tauri/src/storage.rs` - `storage_database_location`, `storage_read_database`, and `storage_write_database`. Writes are atomic (temp file + rename), size-capped at 64 MiB, and re-verified to stay inside the app-local-data directory. Rust owns **no** schema, migrations, or CRUD, and exposes **no** generic SQL execution command.
+- **Migration tracking**: a `schema_migrations(version, name, checksum, applied_at)` ledger owned by the runner; each migration applies inside a transaction and is rolled back on failure; checksums use a deterministic FNV-1a hash and a mismatch raises `MIGRATION_CHECKSUM_MISMATCH`.
+- **Persistence model**: the entire database is serialized (`export()`) and atomically written after every mutation. This is the sql.js persistence model, not a live file handle.
+
+#### Phase 2 tables (created)
+`projects`, `scans`, `scan_technologies` (per section 3) and `app_settings` (`key TEXT PRIMARY KEY`, `value TEXT`, `updated_at`) - the latter is an addition driven by PLAN.md Phase 2 ("settings") and is documented as such. Indexes: `idx_projects_status`, `idx_projects_updated_at`, `idx_scans_project_id`, `idx_scan_tech_scan_id`.
+
+#### Deferred tables (intentionally NOT created in Phase 2)
+`scan_pages`, `scan_assets`, `blueprints`, `auth_sessions`. These arrive with their owning phases and are not omissions.
+
 ---
 
 ## 3. Relational Schema & Table Definitions

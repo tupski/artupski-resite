@@ -31,6 +31,7 @@ Standardized event key structure: `<domain>.<action_or_state>`.
 - `blueprint.*`: Schema parsing, Zod validation, blueprint generation.
 - `clone.*`: Local HTML path rewriting, web server serving, static preview.
 - `project.*`: Codebase generation, file writing, package installation.
+- `storage.*`: Local database initialization, migration lifecycle, readiness.
 
 ---
 
@@ -45,7 +46,8 @@ export type EventDomain =
   | 'auth'
   | 'blueprint'
   | 'clone'
-  | 'project';
+  | 'project'
+  | 'storage';
 
 export interface BaseEventPayload {
   eventId: string;
@@ -143,7 +145,50 @@ export interface ProjectGenerationEventPayload extends BaseEventPayload {
   totalFiles: number;
   progressPercentage: number;
 }
+
+// Storage Events (Phase 2 - local database lifecycle)
+export interface StorageInitializingEventPayload extends BaseEventPayload {
+  domain: 'storage';
+}
+
+export interface StorageReadyEventPayload extends BaseEventPayload {
+  domain: 'storage';
+  databaseLocation: string;
+  appliedMigrations: number[];
+}
+
+export interface StorageMigrationStartedEventPayload extends BaseEventPayload {
+  domain: 'storage';
+  version: number;
+  name: string;
+}
+
+export interface StorageMigrationCompletedEventPayload extends BaseEventPayload {
+  domain: 'storage';
+  version: number;
+  name: string;
+  appliedCount: number;
+}
+
+export interface StorageMigrationFailedEventPayload extends BaseEventPayload {
+  domain: 'storage';
+  version: number | null;
+  code: string;
+  message: string;
+}
 ```
+
+### 3.1 Storage Event Keys (Phase 2)
+
+Emitted by `storageService` during startup and migration, using the existing `createEvent` envelope pattern:
+
+| Event key | Emitted when |
+| :--- | :--- |
+| `storage.initializing` | Storage initialization begins. |
+| `storage.migration_started` | Immediately before a pending migration is applied. |
+| `storage.migration_completed` | After a migration commits. |
+| `storage.migration_failed` | Initialization or a migration fails (carries the structured error code and message). |
+| `storage.ready` | The database is open, migrated, and repositories are available. |
 
 ---
 

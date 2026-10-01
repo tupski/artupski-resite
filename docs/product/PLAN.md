@@ -48,18 +48,30 @@ The following decisions were made during implementation and supersede the pre-im
 ---
 
 ## Phase 2: Local Database & Persistence Layer
+- **Status**: COMPLETE (see the Phase 2 implementation note at the end of this section).
 - **Goal**: Configure SQLite database and repository abstraction layer.
 - **Scope**: Database schema migrations, SQLite connection via Rust/Tauri bridge or better-sqlite3 worker.
 - **Dependencies**: Phase 1.
-- **Files/Modules Affected**: `src-tauri/src/db/`, `src/services/db/`, `src/types/models.ts`.
+- **Files/Modules Affected**: `src-tauri/src/storage.rs`, `src/services/storage/`, `src/services/projects/projectService.ts`, `src/stores/projectsStore.ts`, `src/types/models.ts`.
 - **Implementation Tasks**:
-  1. Define database schema (projects, scan_runs, assets, blueprints, settings).
+  1. Define database schema (projects, scans, scan_technologies, app settings).
   2. Implement migration runner on app startup.
   3. Expose TypeScript CRUD repository interfaces for frontend consumption.
 - **Tests**: Database CRUD unit tests (in-memory SQLite for testing).
 - **Acceptance Criteria**: Data persists across application restarts.
 - **Potential Risks**: SQLite locking on concurrent writes from multiple processes.
 - **Verification**: Store a test project record, restart app, verify retrieval.
+
+### Phase 2 Implementation Notes (as built)
+The following decisions were made during implementation and supersede the pre-implementation wording above where they conflict:
+
+1. **Engine**: `sql.js` (SQLite 3 compiled to WebAssembly) instead of `better-sqlite3`/Kysely, so the same engine runs in the Tauri webview and under Vitest/jsdom without a native build. Documented deviation in `docs/architecture/DATABASE.md` section 2.1 and `docs/architecture/TECH-STACK.md`.
+2. **Rust boundary**: `src-tauri/src/db/` was not created. Rust exposes only three sandboxed file-I/O commands in `src-tauri/src/storage.rs` (`storage_database_location`, `storage_read_database`, `storage_write_database`); it owns no schema, migrations, or CRUD and exposes no generic SQL.
+3. **Schema actuals**: `projects`, `scans`, `scan_technologies` (from `DATABASE.md`) plus `app_settings` (an addition driven by this phase's "settings" item). `scan_pages`, `scan_assets`, `blueprints`, and `auth_sessions` are deferred to their owning phases and were intentionally not created.
+4. **Migration tracking**: a `schema_migrations` ledger with deterministic checksums, transactional per-migration application, and a hard stop on checksum mismatch (`MIGRATION_CHECKSUM_MISMATCH`).
+5. **Persistence model**: the whole database is exported and atomically written after each mutation (the sql.js model), through the sandboxed Rust command.
+6. **UI**: the Projects route reads the real database via `projectsStore` -> `projectService` -> repositories, with honest loading/empty/error states and a minimal create/delete affordance. No fabricated data.
+7. **Module naming**: the implementation uses `src/services/storage/` (not `src/services/db/`) to reflect that the layer covers the database plus its file persistence boundary.
 
 ---
 

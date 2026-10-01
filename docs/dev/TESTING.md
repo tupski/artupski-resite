@@ -117,6 +117,9 @@ Phase 1 ships only the unit/component tier. Integration and E2E scripts below ar
 # Unit & component tests (Vitest + React Testing Library) - implemented in Phase 1
 npm run test:unit
 
+# Storage layer tests only (`vitest run src/services/storage`) - Phase 2
+npm run test:storage
+
 # Typecheck & Lint
 npm run typecheck && npm run lint
 
@@ -136,3 +139,14 @@ Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{
 - `src/services/infra/logger.test.ts` - level filtering and sinks.
 - `src/services/theme/themeController.test.ts` - theme resolution and DOM application.
 - `src/app/AppShell.test.tsx` - routing, navigation, URL entry, and settings rendering.
+
+### Storage layer (Phase 2)
+
+The storage layer is verified against a real (in-memory) SQLite database - never a mock - using the same `sql.js` engine the application runs. `src/services/storage/__tests__/helpers.ts` exposes `createTestStorage()`, which returns an isolated instance backed by a fresh in-memory database and a `MemoryStorageFile`; tests never touch the real `app.db`.
+
+- `database.test.ts` - open/close, applied pragmas, transaction rollback, export, and the created-vs-deferred table set.
+- `migrations.test.ts` - fresh application, tracking rows, idempotent re-runs, pending-only application, checksum mismatch, and rollback of a failing migration (injected).
+- `repositories.test.ts` - per-entity CRUD, missing-id behavior, and constraints (NOT NULL, primary-key uniqueness, CHECK status, confidence bounds, FK cascade).
+- `persistence.test.ts` - export bytes, reopen into a new database, data survival, and a second open without re-running migrations.
+- `storageService.test.ts` - the singleton lifecycle (`uninitialized` -> `initializing` -> `ready`/`error`), `STORAGE_NOT_READY` guards, and `projectService` URL validation.
+- `src/stores/projectsStore.test.ts` - transient store state and delegation to `projectService`.

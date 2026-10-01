@@ -28,6 +28,12 @@ System failure modes taxonomy, structured error schemas, recovery strategies, an
 | `IO_` | `PERMISSION_DENIED` | Filesystem | OS denied write/read access to target folder. |
 | `DB_` | `SQLITE_BUSY` | Persistence | SQLite database locked by concurrent worker process. |
 | `DB_` | `SQLITE_CORRUPT` | Persistence | Disk corruption or damaged database header. |
+| `DB_` | `STORAGE_INIT_FAILED` | Persistence | Local storage (sql.js engine or `app.db`) failed to initialize at startup. |
+| `DB_` | `STORAGE_NOT_READY` | Persistence | A repository was used before local storage finished initializing. |
+| `DB_` | `STORAGE_READ_FAILED` | Persistence | Reading the `app.db` bytes failed. |
+| `DB_` | `STORAGE_WRITE_FAILED` | Persistence | Atomically writing the `app.db` bytes failed. |
+| `DB_` | `MIGRATION_FAILED` | Persistence | A schema migration threw and was rolled back. |
+| `DB_` | `MIGRATION_CHECKSUM_MISMATCH` | Persistence | An applied migration no longer matches its recorded checksum (fatal; refuses to continue). |
 | `PROC_` | `USER_CANCELLED` | Lifecycle | User aborted scan or generation task via UI. |
 
 ---

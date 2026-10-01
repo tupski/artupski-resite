@@ -26,10 +26,13 @@ describe('application shell', () => {
     expect(homeLink.className).toContain('text-text-primary');
   });
 
-  it('renders the projects route with its empty state', () => {
+  it('renders the projects route with an honest storage state', () => {
     renderAt('/projects');
     expect(screen.getByRole('heading', { name: 'Projects', level: 1 })).toBeInTheDocument();
-    expect(screen.getByText(/no projects yet/i)).toBeInTheDocument();
+    // Phase 2: the route reads the real database. Storage is not initialized in
+    // this shell test, so it must render the honest unavailable state rather
+    // than fabricated rows.
+    expect(screen.getByText(/local storage is unavailable/i)).toBeInTheDocument();
   });
 
   it('renders the scan route with configuration controls and a disabled action', () => {

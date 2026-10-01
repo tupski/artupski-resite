@@ -7,6 +7,8 @@
 
 use serde::Serialize;
 
+mod storage;
+
 /// Static application identity returned to the frontend.
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -51,7 +53,13 @@ fn runtime_info() -> RuntimeInfo {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![app_info, runtime_info])
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            runtime_info,
+            storage::storage_database_location,
+            storage::storage_read_database,
+            storage::storage_write_database
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Artupski ReSite");
 }
