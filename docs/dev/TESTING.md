@@ -239,6 +239,18 @@ The default suite covers the provider client, token budgeting, payload isolation
 
 The **opt-in** `src/services/ai/__tests__/aiEngine.e2e.test.ts` (gate `RUN_AI_TESTS=1`, `@vitest-environment node`) boots a real local OpenAI-compatible HTTP server (`node:http`, `127.0.0.1:7331`) and drives the full stack over a real socket: `/models` health check, a typed non-streaming completion, and a schema-constrained generation task returning valid structured JSON. It touches no external network.
 
+### 5.9 Phase 11 component synthesis test tier
+
+The default suite covers the prompt, payload projection, output contract, cleanliness gate, and the orchestrator **without any network access** (a scripted engine is injected; no live model):
+
+- `src/services/ai/prompts/__tests__/componentPrompt.test.ts` - the AI-SPEC §5.1 directives are always prepended, the authored task contract is present, strict-JSON output is required, AI-slop constructs are forbidden, and no untrusted evidence leaks into the instruction.
+- `src/services/generator/__tests__/componentPayload.test.ts` - bounded projection (variant/prop/token/fragment caps, sorted), child names without bodies, observed-vs-inferred `confidence` preserved, absent evidence omitted (no fabrication), and PascalCase identifier derivation.
+- `src/services/generator/__tests__/componentSchema.test.ts` - `ComponentOutputSchema` accepts well-formed output and rejects non-PascalCase names, empty/oversized code, and unknown keys (strict).
+- `src/services/generator/__tests__/jsxCleanliness.test.ts` - the structural gate (unsafe constructs, unbalanced/excessive nesting, missing declaration, invalid identifier) and the AI-slop gate (filler, comments, `any`/`@ts-ignore`, `console.*`, empty handlers, unused imports) plus the deterministic, idempotent normalizer.
+- `src/services/generator/__tests__/componentSynthesizer.test.ts` - end-to-end synthesis from a validated Blueprint, the schema-constrained task shape, per-component failure isolation, `componentId` echo cross-check, `SLOPPY_OUTPUT`, engine-throw handling, invalid-Blueprint refusal, the component cap, `componentIds` filtering, cancellation (`aborted`), deterministic identifier de-duplication, `component.*` event sequences with bounded payloads, and file-name sanitization.
+
+All Phase 11 tests use deterministic fixtures and a scripted/JSON engine; none require an API key.
+
 **Responsive capture (Phase 7, as built)**: `src/services/scanner/responsiveScanner.test.ts` covers profile selection, path sanitisation, and orchestration (including the honest skip-on-failure path). `src/services/storage/__tests__/responsiveCaptures.test.ts` covers the migration + repository (one-per-page/profile, cascade, reopen). `src/services/infra/workerProtocol.test.ts` validates the `captureViewport` wire shape (including the profile bounds). The opt-in `src/workers/crawler/__tests__/responsiveCapture.e2e.test.ts` renders the responsive fixture at desktop AND mobile and asserts the captures are distinct (different screenshot bytes; `nav` visible on desktop, hidden on mobile) with detected media-query breakpoints.
 
 Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):

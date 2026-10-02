@@ -16,6 +16,7 @@ export type EventDomain =
   | 'auth'
   | 'blueprint'
   | 'clone'
+  | 'component'
   | 'project'
   | 'ai'
   | 'storage'
@@ -66,6 +67,10 @@ export type AppEventType =
   | 'clone.server_stopped'
   | 'clone.completed'
   | 'clone.failed'
+  | 'component.started'
+  | 'component.generated'
+  | 'component.failed'
+  | 'component.completed'
   | 'project.started'
   | 'project.file_generated'
   | 'project.completed'
@@ -484,6 +489,45 @@ export interface AiGenerationFailedPayload extends BaseEventPayload {
   message: string;
 }
 
+/**
+ * Component synthesis lifecycle payloads (Phase 11). They carry component ids,
+ * names, and counts only - NEVER generated code, prompt content, or blueprint
+ * evidence.
+ */
+export interface ComponentStartedPayload extends BaseEventPayload {
+  domain: 'component';
+  /** Number of components this run intends to attempt (after capping). */
+  requested: number;
+}
+
+export interface ComponentGeneratedPayload extends BaseEventPayload {
+  domain: 'component';
+  /** Blueprint component id the artifact traces back to. */
+  componentId: string;
+  /** PascalCase identifier of the generated component. */
+  name: string;
+  /** Bounded code length (chars) - the code itself is never emitted. */
+  codeLength: number;
+}
+
+export interface ComponentFailedPayload extends BaseEventPayload {
+  domain: 'component';
+  componentId: string;
+  name: string;
+  code: string;
+  /** Bounded, actionable message; never code content or secrets. */
+  message: string;
+}
+
+export interface ComponentCompletedPayload extends BaseEventPayload {
+  domain: 'component';
+  requested: number;
+  succeeded: number;
+  failed: number;
+  /** True when the run stopped early (cap reached or caller aborted). */
+  partial: boolean;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
@@ -545,6 +589,10 @@ export interface AppEventPayloadMap {
   'ai.generation_started': AiGenerationStartedPayload;
   'ai.generation_completed': AiGenerationCompletedPayload;
   'ai.generation_failed': AiGenerationFailedPayload;
+  'component.started': ComponentStartedPayload;
+  'component.generated': ComponentGeneratedPayload;
+  'component.failed': ComponentFailedPayload;
+  'component.completed': ComponentCompletedPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;

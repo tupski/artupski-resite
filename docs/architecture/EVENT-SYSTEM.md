@@ -31,6 +31,7 @@ Standardized event key structure: `<domain>.<action_or_state>`.
 - `blueprint.*`: Schema parsing, Zod validation, blueprint generation.
 - `clone.*`: Local HTML path rewriting, web server serving, static preview (`clone.started`, `clone.file_generated`, `clone.asset_downloaded`, `clone.server_started`, `clone.server_stopped`, `clone.completed`, `clone.failed`).
 - `ai.*`: Provider configuration, connection/health checks, and schema-constrained generation lifecycle (`ai.config_saved`, `ai.connection_started`, `ai.connection_verified`, `ai.connection_failed`, `ai.generation_started`, `ai.generation_completed`, `ai.generation_failed`). Payloads carry provider id, model, and counts only — **never** the API key, request headers, or prompt/completion content.
+- `component.*`: AI component synthesis lifecycle (`component.started`, `component.generated`, `component.failed`, `component.completed`). Payloads carry component ids, names, counts, and code length only — **never** the generated code, prompt content, or Blueprint evidence.
 - `project.*`: Codebase generation, file writing, package installation.
 - `storage.*`: Local database initialization, migration lifecycle, readiness.
 - `process.*`: Child-process lifecycle (spawn/ready/busy/stopping/stopped/exited/failed).
@@ -242,6 +243,19 @@ Emitted by the Blueprint lifecycle wrapper (`src/services/blueprint/blueprintLif
 | `blueprint.completed` | The lifecycle attempt finished (always emitted last, success or failure). | `blueprintId?`, `version`, `isValid`, `partial`, `skippedPages` |
 
 Ordering guarantee: `blueprint.started` → (`blueprint.generated` \| `blueprint.validation_failed`) → `blueprint.completed`. A Blueprint failure **never** changes a crawl's terminal status (`scanner.completed`/`scanner.failed` are unaffected).
+
+### 3.5 Component Synthesis Event Keys (Phase 11)
+
+Emitted by the component synthesizer (`src/services/generator/componentSynthesizer.ts`) using the shared `createEvent` envelope. Payload interfaces live in `src/services/infra/eventBus.ts`. Payloads carry component ids, names, counts, and code length only — **never** the generated code, prompt content, or Blueprint evidence.
+
+| Event key | Emitted when | Payload highlights |
+| :--- | :--- | :--- |
+| `component.started` | A synthesis run begins. | `requested` (components to attempt, after capping) |
+| `component.generated` | One component was synthesized and passed the cleanliness gate. | `componentId`, `name`, `codeLength` |
+| `component.failed` | One component failed (over-budget, malformed, wrong id, sloppy). | `componentId`, `name`, `code`, bounded `message` |
+| `component.completed` | The run finished (always emitted last, success or failure). | `requested`, `succeeded`, `failed`, `partial` |
+
+Ordering guarantee: `component.started` → (`component.generated` \| `component.failed`)\* → `component.completed`. One component failing never aborts the run; the aggregate result carries every success plus the bounded failures. A synthesis failure never mutates existing crawl results, clones, stored Blueprints, or generated artifacts.
 
 ---
 

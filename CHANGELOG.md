@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 11 - AI-powered component extraction & synthesis
+
+Turns a validated Phase 9 Blueprint into clean React + Tailwind TSX components using the Phase 10
+AI engine. It is an opt-in **service-layer** increment: **no new worker, IPC command, database
+migration, or runtime dependency**, and `WORKER_PROTOCOL_VERSION` stays `1`.
+
+- **Prompt engineering**: `src/services/ai/prompts/componentPrompt.ts` authors a fixed, trusted
+  instruction for one component and always prepends the AI-SPEC §5.1 security directives via
+  `buildSystemPrompt`. All Blueprint/HTML/CSS evidence is untrusted and isolated in
+  `<DATA_PAYLOAD>` by the Phase 10 pipeline; no crawler text is concatenated into the prompt.
+- **Chunking & payload**: `src/services/generator/componentPayload.ts` projects one component at a
+  time into a bounded, deterministic payload (variant/prop/token/fragment caps, sorted) — the
+  AI-SPEC §3.2 chunking strategy that keeps massive DOM trees within the model context window.
+- **Synthesis**: `src/services/generator/componentSynthesizer.ts` depends on a narrow
+  `ComponentSynthesisEngine` seam (`{ generate }`) satisfied by the Phase 10 `AiEngine`; it never
+  imports a provider. Output is structured JSON validated by `ComponentOutputSchema` (Zod,
+  `src/services/generator/componentSchema.ts`) with bounded repair (`maxRepairAttempts: 1`) and a
+  `componentId` echo cross-check. Types live in `src/types/componentSynth.ts`.
+- **JSX cleanliness optimizer**: `src/services/generator/jsxCleanliness.ts` is a deterministic gate
+  that rejects unsafe constructs (`<script>`, `dangerouslySetInnerHTML`, `eval`, `Function`,
+  `require`, dynamic `import`, `process.env`), unbalanced/excessive nesting, a missing component
+  declaration, and AI-slop (filler prose, comments, `any`/`@ts-ignore`, `console.*`, empty
+  handlers, unused imports), then normalizes whitespace/import order. Generated code is never
+  executed — validation is textual.
+- **Honesty & isolation**: a `componentId` mismatch or a cleanliness failure marks that component
+  `failed` with a bounded structured error; other components continue. Cancellation stops remaining
+  work and reports `aborted`. A Blueprint that fails validation is refused without fabrication.
+- **Events**: `src/services/infra/eventBus.ts` adds a bounded `component.*` domain (`started`,
+  `generated`, `failed`, `completed`) carrying ids/counts only — never generated code or evidence.
+- **Tests**: `src/services/generator/__tests__/*` and
+  `src/services/ai/prompts/__tests__/componentPrompt.test.ts` cover payload bounding, prompt
+  isolation, schema/echo validation, unsafe/sloppy rejection, failure isolation, cancellation,
+  event emission, deterministic identifier de-duplication, and file-name sanitization.
+- **Deferred**: persisting/emitting generated files and project assembly (Phase 12), visual diffing
+  (Phase 13), doc/ZIP export (Phase 14). Phase 11 adds no UI and does not wire into the scan
+  lifecycle. **Recorded deviation**: "render matching UI" is implemented as evidence-grounded,
+  framework-idiomatic TSX, not pixel equivalence (Phase 13 owns pixel diffing).
+
 ### Phase 10 - AI provider abstraction & engine
 
 A **provider-agnostic AI engine** in the TypeScript layer for any OpenAI-compatible REST endpoint (OpenAI, OpenRouter, 9Router, Ollama, LM Studio, LocalAI/vLLM, or a custom base URL). It performs a real health check, structured-output generation with bounded self-repair, and defensive untrusted-data isolation. **No new process manager, browser runtime, worker, or migration was created**; the engine is a plain TypeScript service in the main process and `WORKER_PROTOCOL_VERSION` stays `1`.

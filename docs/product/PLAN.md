@@ -328,6 +328,7 @@ Delivered as a **provider-agnostic AI engine** in the TypeScript layer. The road
 ---
 
 ## Phase 11: AI-Powered Component Extraction & Synthesis
+- **Status**: COMPLETE (see the Phase 11 implementation note below and `docs/impl-plan/phase-11-impl-plan.md`).
 - **Goal**: Use AI to transform raw HTML/CSS component segments into clean React + Tailwind components.
 - **Scope**: Component prompt engineering, code synthesis pipeline, JSX cleanliness optimizer.
 - **Dependencies**: Phase 9, Phase 10.
@@ -340,6 +341,47 @@ Delivered as a **provider-agnostic AI engine** in the TypeScript layer. The road
 - **Acceptance Criteria**: Generated components compile with TypeScript and render matching UI.
 - **Potential Risks**: Exceeding model context window on massive DOM trees (mitigate via chunking).
 - **Verification**: Generate button and card components; verify clean JSX and Tailwind syntax.
+
+### Phase 11 Implementation Notes (as built)
+
+Delivered as a **service-layer component synthesis engine** in the TypeScript layer. The
+roadmap's illustrative paths were kept (`src/services/ai/prompts/componentPrompt.ts`,
+`src/services/generator/componentSynthesizer.ts`); the generator module tree adds
+`componentPayload.ts` (bounded chunking), `componentSchema.ts` (Zod output contract), and
+`jsxCleanliness.ts` (deterministic AI-slop gate + normalizer), re-exported from
+`src/services/generator/index.ts`. Types live in `src/types/componentSynth.ts`.
+**No new worker, IPC command, database migration, or runtime dependency was created.**
+
+- **Input**: A **validated** `Blueprint` (Phase 9) — the synthesizer validates untrusted input with
+  `validateBlueprint` and refuses an invalid document without fabricating anything. It reads the
+  `components` registry and `design_system` tokens only; observed-vs-inferred provenance is
+  preserved on each artifact (`category`, optional `confidence`, source `componentId`).
+- **Chunking (A4)**: `projectComponentPayload` projects one component at a time into a bounded,
+  sorted payload (variant/prop/token/fragment caps) so a massive DOM tree cannot exceed the model
+  context window; the Phase 10 budget guard rejects any residual over-budget task before the wire.
+- **Prompt (A6)**: `componentPrompt.ts` authors the trusted instruction and always prepends the
+  AI-SPEC §5.1 security directives via `buildSystemPrompt`. All evidence is untrusted and wrapped in
+  `<DATA_PAYLOAD>` by the Phase 10 pipeline — no crawler text is ever concatenated into the prompt.
+- **AI reuse**: `synthesizeComponents` depends on a narrow `ComponentSynthesisEngine` seam
+  (`{ generate }`) satisfied by the Phase 10 `AiEngine`; it never imports a provider. Output is
+  structured JSON validated by `ComponentOutputSchema` (Zod) with bounded repair
+  (`maxRepairAttempts: 1`).
+- **Quality gate (A1/A3)**: a schema-valid result is not trusted. `jsxCleanliness` rejects unsafe
+  constructs (`<script>`, `dangerouslySetInnerHTML`, `eval`, `Function`, `require`, dynamic
+  `import`, `process.env`), unbalanced/excessively-nested delimiters, a missing component
+  declaration, and AI-slop (filler prose, any comment, `any`/`@ts-ignore`, `console.*`, empty
+  handlers, unused imports). Generated code is **never executed**: validation is textual.
+- **Failure isolation**: one component failing (over-budget, malformed, wrong id, sloppy) never
+  aborts the run; the aggregate returns every success plus a bounded, honest failure. Cancellation
+  stops the remaining components and reports `aborted`.
+- **Events**: a bounded `component.*` domain (`started`, `generated`, `failed`, `completed`) carrying
+  ids/counts only — never generated code or evidence.
+- **Deferred**: persisting/emitting generated files and full project assembly (Phase 12), visual
+  diffing (Phase 13), doc/ZIP export (Phase 14). Phase 11 exposes services only; no UI or scan
+  lifecycle wiring is added.
+- **Recorded deviation**: the acceptance criterion "render matching UI" is implemented as
+  *evidence-grounded, framework-idiomatic TSX* (structural contract), **not** pixel equivalence —
+  pixel diffing is owned by Phase 13. See `docs/impl-plan/phase-11-impl-plan.md` §12 (R1/R2).
 
 ---
 

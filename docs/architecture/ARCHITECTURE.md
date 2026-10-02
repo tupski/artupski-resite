@@ -68,7 +68,14 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
 - **Configuration & secrets**: AI settings live in the existing `app_settings` table (`ai.config`, `ai.credentials`) — **no migration**. The key is stored under a separate key, never logged, never emitted in events, and masked in the UI.
 - **Events**: a bounded `ai.*` domain (`config_saved`, `connection_started|verified|failed`, `generation_started|completed|failed`) carrying ids/counts only.
 - **UI seam**: `src/stores/aiStore.ts` mirrors the persisted config and the last real health check with honest `unconfigured | idle | testing | ready | error` states; `src/components/settings/AiProviderPanel.tsx` renders the provider form and connection test in `SettingsRoute`. The React UI never imports the provider internals.
-- **Deferred**: component synthesis (Phase 11), project generation (Phase 12), visual diffing (Phase 13), doc/ZIP export (Phase 14), OS-keychain credential storage (Phase 15), and scan-lifecycle integration of the engine.
+- **Deferred**: project generation (Phase 12), visual diffing (Phase 13), doc/ZIP export (Phase 14), OS-keychain credential storage (Phase 15), and scan-lifecycle integration of the engine. Component synthesis is delivered in §3.2b.
+
+#### 3.2b Component Synthesis (as built, Phase 11)
+- **Seam**: `src/services/generator/` — `componentSynthesizer.ts` (orchestrator), `componentPayload.ts` (bounded chunking), `componentSchema.ts` (Zod output contract), `jsxCleanliness.ts` (deterministic AI-slop gate + normalizer). The public surface is `src/services/generator/index.ts`; the prompt lives in `src/services/ai/prompts/componentPrompt.ts`; types live in `src/types/componentSynth.ts`. **Main-process TypeScript only** — no worker, no Rust command, `WORKER_PROTOCOL_VERSION` unchanged.
+- **Flow**: validated `Blueprint` → `projectComponentPayload` (one component, capped tokens/variants/fragment) → `componentPrompt` + `buildSystemPrompt` → **Phase 10** `AiEngine.generate` (`<DATA_PAYLOAD>` isolation, JSON mode, Zod, bounded repair) → `componentId` echo cross-check → `jsxCleanliness` gate → cleaned TSX artifact. The synthesis engine depends only on a `{ generate }` seam, never a provider.
+- **Honesty**: a syntactically valid result is not trusted; unsafe/sloppy output is rejected with a per-component failure while others continue. Generated code is never executed. An invalid Blueprint is refused. Cancellation stops remaining components and reports `aborted`.
+- **Events**: a bounded `component.*` domain (`started`, `generated`, `failed`, `completed`) carrying ids/counts/code-length only — never code or evidence.
+- **Deferred**: persisting/emitting generated files and project assembly (Phase 12), visual diffing (Phase 13), doc/ZIP export (Phase 14). No UI, store, or scan-lifecycle wiring is added in Phase 11.
 
 ### 3.3 Clone Engine
 - Processes network responses and DOM assets.
@@ -76,7 +83,7 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
 
 ### 3.4 Project Generator
 - Template-driven code generation engine.
-- Transforms blueprint component trees into idiomatic React components, Tailwind utility classes, and TypeScript interfaces.
+- Transforms blueprint component trees into idiomatic React components, Tailwind utility classes, and TypeScript interfaces. It reuses the Phase 11 component synthesizer (§3.2b) for component code; the deterministic Prettier formatting step and atomic disk emission (`PROJECT-GENERATOR-SPEC.md` §4) remain Phase 12 work.
 
 ### 3.5 Local Storage Subsystem
 - SQLite embedded database.
