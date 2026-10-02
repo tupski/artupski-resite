@@ -113,6 +113,29 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
   `WORKER_PROTOCOL_VERSION` stays `1`; no new worker.
 - **Deferred**: doc/ZIP export (Phase 14), OS-keychain credential storage (Phase 15).
 
+### 3.4c Project Documentation & Export Engine
+- Generates project-specific Markdown documentation and bundles a generated project into a standalone
+  ZIP archive or a copied local folder.
+- **As built (Phase 14)**: `src/services/exporter/` is a **service-layer** module. `docGenerator.ts`
+  exposes a pure `generateDocs(input)` emitting exactly `README.md`, `ARCHITECTURE.md`, and
+  `COMPONENTS.md` from the Phase 12 `ProjectGenerationReport` + caller metadata (nothing fabricated);
+  `zip.ts` is a **dependency-free, deterministic** store/deflate ZIP codec (self-contained CRC-32,
+  path-sorted entries, fixed DOS timestamp, UTF-8 flag); `zipExporter.ts` (`exportProject`) orchestrates
+  both `mode: 'zip'` and `mode: 'folder'`, with filesystem access behind an injected
+  `ExportFileReader`/`ExportFileWriter` seam (Node `fs` in tests, sandboxed IPC later). Types live in
+  `src/types/export.ts`.
+- **Security & limits**: every entry path and read/write target is confined with the Phase 12 helpers
+  (`isSafeProjectRelativePath`, `pathDepth`, `resolveWithinRoot`); bounded caps (entries, per-entry
+  bytes, total bytes, path depth, doc bytes) **reject rather than truncate**; a limit breach or a
+  path violation fails the run, a single unreadable file is skipped honestly (`partial`), and the
+  service never throws past its boundary. With no deps injected it returns `EXPORT_UNAVAILABLE`
+  rather than writing unconfined.
+- **Events**: a bounded `export.*` domain (`started`, `doc_generated`, `entry_written`, `completed`,
+  `failed`) carries modes, document names, entry paths, counts, and byte sizes only — never file
+  contents or secrets. `WORKER_PROTOCOL_VERSION` stays `1`; no new worker.
+- **Deferred**: production reader/writer wiring (native sandbox + destination picker) and the
+  UI-SPEC §2.9 export screen.
+
 ### 3.5 Local Storage Subsystem
 - SQLite embedded database.
 - Stores project metadata, scan runs, captured assets, blueprints, settings, and logs.

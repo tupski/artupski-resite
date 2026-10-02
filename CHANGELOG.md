@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 14 - Project documentation & export engine
+
+Auto-generates a small, honest Markdown documentation set for a completed Phase 12 generated project
+and bundles the project into a standalone, deterministic **ZIP archive** — or copies it to a selected
+local **folder**. It is a **service-layer + tests** increment: **no UI, no route, no store, no Rust
+command, and no new runtime dependency**, and `WORKER_PROTOCOL_VERSION` stays `1`.
+
+- **Documentation generator**: `src/services/exporter/docGenerator.ts` exposes a pure
+  `generateDocs(input)` that emits exactly `README.md`, `ARCHITECTURE.md`, and `COMPONENTS.md`,
+  derived entirely from the Phase 12 `ProjectGenerationReport` plus caller-supplied metadata. Nothing
+  is fabricated; absent sections are omitted; a document over `MAX_EXPORT_DOC_BYTES` (1 MiB) is
+  refused rather than truncated. Types live in `src/types/export.ts`.
+- **Deterministic, dependency-free ZIP**: `src/services/exporter/zip.ts` is an in-repo store/deflate
+  codec with a self-contained CRC-32 (IEEE `0xEDB88320`), entries sorted by path, a fixed DOS
+  timestamp (1980-01-01 00:00:00 -> `0x0021`/`0x0000`), and the UTF-8 name flag (bit 11), so two
+  builds are byte-for-byte identical. No `jszip`/`adm-zip`/`archiver`/`fflate`/`pako` dependency.
+- **Export service**: `src/services/exporter/zipExporter.ts` exposes `exportProject(request, deps)`.
+  Both **`mode: 'zip'`** (single archive) and **`mode: 'folder'`** (copied tree) are first-class.
+  Filesystem access is a fully injected `ExportFileReader`/`ExportFileWriter` seam (Node `fs` in
+  tests, sandboxed IPC later); with no deps supplied the service returns an actionable
+  `EXPORT_UNAVAILABLE` error rather than performing an unconfined write. It never throws past its
+  boundary.
+- **Security & limits**: every entry path and read/write target is validated with the Phase 12 path
+  helpers (`isSafeProjectRelativePath`, `pathDepth`, `resolveWithinRoot`) before any side effect;
+  absolute paths, `..`, backslashes, drive letters, NUL, over-depth, and duplicate/case-colliding
+  entries are rejected. Bounded caps (`MAX_EXPORT_ENTRIES` 2100, `MAX_EXPORT_ENTRY_BYTES` 1 MiB,
+  `MAX_EXPORT_TOTAL_BYTES` 64 MiB, `MAX_EXPORT_PATH_DEPTH` 16, `MAX_EXPORT_DOC_BYTES` 1 MiB) **reject
+  with an actionable error rather than truncating** (no silent data loss) - the concrete mitigation
+  for the PLAN risk note ("large asset directories causing zip memory bloat"). A single unreadable
+  file is recorded in `skipped` (`partial: true`); abort cleans up any partial artifact via
+  `writer.remove`.
+- **Events**: `src/services/infra/eventBus.ts` adds the bounded `export.*` domain (`started`,
+  `doc_generated`, `entry_written`, `completed`, `failed`) carrying modes, document names, entry
+  paths, counts, and byte sizes only - **never** file contents or secrets. Error codes
+  (`EXPORT_VALIDATION_FAILED`, `EXPORT_LIMIT_EXCEEDED`, `EXPORT_READ_FAILED`, `EXPORT_WRITE_FAILED`,
+  `EXPORT_DOC_GENERATION_FAILED`) are appended to the `ErrorCode` union in
+  `src/services/infra/errors.ts` (reusing the existing `io`/`validation` categories).
+- **Tests**: `src/services/exporter/__tests__/` (doc generation + Markdown syntax; ZIP codec +
+  round-trip integrity; orchestration limits/paths/duplicates/events/never-throws), plus the opt-in
+  `zipExporter.e2e.test.ts` (gate `RUN_EXPORT_E2E=1`) that generates a real project, exports a real
+  ZIP, and unzips/verifies every `report.files` source file + doc byte-for-byte.
+- **Known limitations** (informational; neither weakens the Phase 14 acceptance criteria or the
+  `SECURITY.md` §5.2 containment contract - see `docs/impl-plan/phase-14-impl-plan.md` §18): (1)
+  exact duplicate paths are de-duplicated by `uniquePaths` without being reported as skipped, while
+  case-insensitive collisions *are* rejected (`EXPORT_DUPLICATE_ENTRY`); (2) `projectRoot`/
+  `destinationRoot` are validated as non-empty strings at the request boundary but not required to be
+  absolute - containment is still enforced downstream via `validateEntryPath`/`resolveWithinRoot`.
+- **Deviations** (see `docs/impl-plan/phase-14-impl-plan.md` §18): doc set is exactly three files
+  (PLAN wins over PROJECT-GENERATOR-SPEC §3.1's 11-file manifest); no UI (UI-SPEC §2.9 deferred);
+  in-repo ZIP (no Rust `zip` crate); production reader/writer wiring deferred.
+
 ### Phase 13 - Visual verification & diff engine
 
 Compares an original captured website against the generated project's rendering: it launches the

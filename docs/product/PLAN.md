@@ -505,6 +505,7 @@ The following decisions were made during implementation and supersede the pre-im
 ---
 
 ## Phase 14: Project Documentation & Export Engine
+- **Status**: COMPLETE (see the Phase 14 implementation note below and `docs/impl-plan/phase-14-impl-plan.md`).
 - **Goal**: Auto-generate comprehensive documentation for generated projects and export archives.
 - **Scope**: Markdown generator (`README.md`, `ARCHITECTURE.md`, `COMPONENTS.md`), ZIP export bundler.
 - **Dependencies**: Phase 12.
@@ -516,6 +517,45 @@ The following decisions were made during implementation and supersede the pre-im
 - **Acceptance Criteria**: Exported archive unpacks cleanly and contains complete source code and docs.
 - **Potential Risks**: Large asset directories causing zip memory bloat.
 - **Verification**: Export project to ZIP, unzip, verify presence of README and all source files.
+
+### Phase 14 Implementation Notes (as built)
+
+Delivered as a **service-layer + tests** increment (no UI, no route, no store, no Rust command, no new
+runtime dependency), mirroring the Phase 12/13 service-only precedent. The roadmap's paths were kept
+(`src/services/exporter/docGenerator.ts`, `src/services/exporter/zipExporter.ts`); the module adds a
+dependency-free ZIP codec (`src/services/exporter/zip.ts`), a barrel (`src/services/exporter/index.ts`),
+and types in `src/types/export.ts`. `WORKER_PROTOCOL_VERSION` stays `1`.
+
+- **Documentation generator** (`docGenerator.ts`): a pure `generateDocs(input)` emits exactly three
+  Markdown documents — `README.md`, `ARCHITECTURE.md`, `COMPONENTS.md` — derived entirely from the
+  Phase 12 `ProjectGenerationReport` plus caller-supplied metadata; nothing is fabricated, and absent
+  sections are omitted. A document over `MAX_EXPORT_DOC_BYTES` is refused, not truncated.
+- **Deterministic, dependency-free ZIP** (`zip.ts`): an in-repo store/deflate codec with a
+  self-contained CRC-32, entries sorted by path, a fixed DOS timestamp (1980-01-01 00:00:00 →
+  `0x0021`/`0x0000`), and the UTF-8 name flag (bit 11), so two builds are byte-for-byte identical. No
+  `jszip`/`adm-zip`/`archiver`/`fflate`/`pako`, and no Rust `zip` crate.
+- **Export service** (`zipExporter.ts`): `exportProject(request, deps)` supports both **`mode: 'zip'`**
+  (single archive) and **`mode: 'folder'`** (copied tree). Filesystem access is a fully injected
+  reader/writer seam; with no deps supplied it returns an actionable `EXPORT_UNAVAILABLE` error rather
+  than performing an unconfined write. It **never throws** past its boundary.
+- **Security & limits**: every entry path and every read/write target is validated with the Phase 12
+  helpers (`isSafeProjectRelativePath`, `pathDepth`, `resolveWithinRoot`) before any side effect;
+  absolute paths, `..`, backslashes, drive letters, NUL, over-depth, and duplicate/case-colliding
+  entries are rejected. Bounded caps (`MAX_EXPORT_ENTRIES` 2100, `MAX_EXPORT_ENTRY_BYTES` 1 MiB,
+  `MAX_EXPORT_TOTAL_BYTES` 64 MiB, `MAX_EXPORT_PATH_DEPTH` 16, `MAX_EXPORT_DOC_BYTES` 1 MiB) **reject
+  with an actionable error rather than truncating** (no silent data loss) — the concrete mitigation
+  for the PLAN risk note. A single unreadable file is recorded in `skipped` (`partial: true`); abort
+  cleans up any partial artifact.
+- **Events**: `src/services/infra/eventBus.ts` adds the bounded `export.*` domain (`started`,
+  `doc_generated`, `entry_written`, `completed`, `failed`) carrying modes, document names, entry paths,
+  counts, and byte sizes only — never file contents or secrets.
+- **Tests**: `src/services/exporter/__tests__/` (doc generation + Markdown syntax, ZIP codec +
+  round-trip integrity, orchestration limits/paths/events/never-throws) plus the opt-in
+  `zipExporter.e2e.test.ts` (gate `RUN_EXPORT_E2E=1`) that generates a real project, exports a real ZIP,
+  and unzips/verifies every source file + doc byte-for-byte.
+- **Deferred**: production wiring of the sandboxed reader/writer (and the native destination picker)
+  and the UI-SPEC §2.9 export screen. See `docs/impl-plan/phase-14-impl-plan.md` §18 for the recorded
+  deviations (three-doc set, no UI, in-repo ZIP, no Rust crate).
 
 ---
 

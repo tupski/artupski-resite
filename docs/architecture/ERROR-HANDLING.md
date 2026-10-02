@@ -44,6 +44,11 @@ System failure modes taxonomy, structured error schemas, recovery strategies, an
 | `PROC_` | `WORKER_PROTOCOL_VIOLATION` | Process | A frame failed validation (malformed, unknown type, version mismatch). |
 | `PROC_` | `WORKER_SHUTDOWN_FAILED` | Process | The worker did not stop within the grace period and was force-terminated. |
 | `BROWSER_` | `BROWSER_NOT_INSTALLED` | Browser | No Playwright Chromium build was found for the runtime. |
+| `EXPORT_` | `EXPORT_VALIDATION_FAILED` | Validation / Input | Export request failed boundary validation (unknown mode, empty project name/root). |
+| `EXPORT_` | `EXPORT_LIMIT_EXCEEDED` | Validation / Input | Export exceeded a bounded resource cap (entries/bytes); the run is rejected, never truncated. |
+| `EXPORT_` | `EXPORT_READ_FAILED` | Filesystem | Listing or reading a source file beneath the project root failed. |
+| `EXPORT_` | `EXPORT_WRITE_FAILED` | Filesystem | Writing the export artifact (ZIP archive or folder) failed. |
+| `EXPORT_` | `EXPORT_DOC_GENERATION_FAILED` | Generation | Generating the Markdown documentation set failed. (An oversized document is reported per-document as `EXPORT_DOC_TOO_LARGE` and never truncates the set.) |
 
 ---
 

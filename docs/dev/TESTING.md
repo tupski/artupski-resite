@@ -304,6 +304,40 @@ All Phase 13 tests build their own RGBA/PNG fixtures in-process; none require a 
 network access. The Phase 12 generator suite (including its opt-in build E2E) and the Phase 8
 `serverPathPolicy` suite are re-run unchanged as regression coverage.
 
+### 5.12 Phase 14 documentation & export test tier
+
+The Phase 14 exporter is verified through the pure doc generator, the dependency-free ZIP codec, and
+the orchestrating service — deterministic, no network, writing only into per-case `node:fs` temp
+directories:
+
+- `src/services/exporter/__tests__/docGenerator.test.ts` — the three documents for the canonical
+  Phase 12 fixture; Markdown syntax validation (single H1, balanced fenced blocks, table header +
+  separator, no unescaped pipes); sections reflect `report.routes`/`components`/`assets`/`summary`;
+  absent data omitted, never fabricated; an over-cap document is refused.
+- `src/services/exporter/__tests__/zip.test.ts` — CRC-32 known-answer vectors (`"123456789"` →
+  `0xCBF43926`); local-header/central-directory/EOCD signatures and offsets; `buildZip` → `readZip`
+  round-trip restores every path and byte; entries sorted; fixed `0x0021`/`0x0000` timestamp; UTF-8
+  flag set; byte-for-byte determinism across two builds; corrupt/truncated input rejected; empty
+  archive handled.
+- `src/services/exporter/__tests__/zipExporter.test.ts` — zip and folder happy paths over an injected
+  in-memory reader/writer; boundary limits (entries, per-entry bytes, total bytes); traversal
+  (`..`, absolute, backslash, drive, NUL) rejected; duplicate/case-colliding entries rejected; a
+  missing source file skipped (`partial`); abort cleans up; bounded `export.*` events; unavailable
+  deps → `EXPORT_UNAVAILABLE`; the never-throws boundary; independent unzip/verify via
+  `zlib.inflateRawSync`.
+- `src/services/exporter/__tests__/exportFixtures.ts` — deterministic Phase 12 report fixtures.
+
+The **opt-in** `src/services/exporter/__tests__/zipExporter.e2e.test.ts` (gate `RUN_EXPORT_E2E=1`) is
+the authoritative real-artifact check: it calls the real `generateProject` into an isolated temp dir,
+exports a real ZIP via a Node-`fs` reader/writer, then unzips and verifies that `README.md`,
+`ARCHITECTURE.md`, `COMPONENTS.md`, and every `report.files` source file are present and
+byte-identical. Set `KEEP_EXPORT_E2E=1` to preserve the temp dirs. If the environment cannot run it,
+the suite reports BLOCKED (skipped) rather than a false PASS. Run it with:
+
+```text
+RUN_EXPORT_E2E=1 npx vitest run src/services/exporter/__tests__/zipExporter.e2e.test.ts
+```
+
 **Responsive capture (Phase 7, as built)**: `src/services/scanner/responsiveScanner.test.ts` covers profile selection, path sanitisation, and orchestration (including the honest skip-on-failure path). `src/services/storage/__tests__/responsiveCaptures.test.ts` covers the migration + repository (one-per-page/profile, cascade, reopen). `src/services/infra/workerProtocol.test.ts` validates the `captureViewport` wire shape (including the profile bounds). The opt-in `src/workers/crawler/__tests__/responsiveCapture.e2e.test.ts` renders the responsive fixture at desktop AND mobile and asserts the captures are distinct (different screenshot bytes; `nav` visible on desktop, hidden on mobile) with detected media-query breakpoints.
 
 Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):

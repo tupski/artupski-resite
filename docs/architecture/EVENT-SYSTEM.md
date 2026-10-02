@@ -40,6 +40,10 @@ Standardized event key structure: `<domain>.<action_or_state>`.
 - `diff.*`: Visual verification lifecycle (`diff.started`, `diff.captured`, `diff.computed`,
   `diff.completed`, `diff.failed`). Phase 13 payloads carry viewport names, pixel counts, and a
   similarity percentage only — **never** screenshot bytes, decoded pixels, or page text.
+- `export.*`: Project documentation & export lifecycle (`export.started`, `export.doc_generated`,
+  `export.entry_written`, `export.completed`, `export.failed`). Phase 14 payloads carry the export
+  mode, document names, POSIX-relative entry paths, counts, and byte sizes only — **never** file
+  contents, document text, or secrets.
 - `storage.*`: Local database initialization, migration lifecycle, readiness.
 - `process.*`: Child-process lifecycle (spawn/ready/busy/stopping/stopped/exited/failed).
 - `browser.*`: Browser runtime detection and controlled session lifecycle.
@@ -263,6 +267,20 @@ Emitted by the component synthesizer (`src/services/generator/componentSynthesiz
 | `component.completed` | The run finished (always emitted last, success or failure). | `requested`, `succeeded`, `failed`, `partial` |
 
 Ordering guarantee: `component.started` → (`component.generated` \| `component.failed`)\* → `component.completed`. One component failing never aborts the run; the aggregate result carries every success plus the bounded failures. A synthesis failure never mutates existing crawl results, clones, stored Blueprints, or generated artifacts.
+
+### 3.6 Project Export Event Keys (Phase 14)
+
+Emitted by the export service (`src/services/exporter/zipExporter.ts`) using the shared `createEvent` envelope. Payload interfaces live in `src/services/infra/eventBus.ts`. Payloads carry the export mode, document names, POSIX-relative entry paths, counts, and byte sizes only — **never** file contents, document text, or secrets.
+
+| Event key | Emitted when | Payload highlights |
+| :--- | :--- | :--- |
+| `export.started` | An export run begins (after path validation + the entry-count limit). | `mode` (`zip`\|`folder`), `files` |
+| `export.doc_generated` | One Markdown document was generated and merged into the export. | `name`, `bytes` |
+| `export.entry_written` | One archive/folder entry was written. | POSIX-relative `path`, `bytes` |
+| `export.completed` | The run finished successfully. | `mode`, `entries`, `bytes`, `partial` |
+| `export.failed` | The run ended in an error or was aborted. | `code`, bounded `message` |
+
+Ordering guarantee: `export.started` → (`export.doc_generated` \| `export.entry_written`)\* → (`export.completed` \| `export.failed`). A single unreadable file is recorded in the report's `skipped` list (`partial: true`) and does not abort the run; a limit/path breach fails the whole run rather than truncating, and the export never throws past its boundary.
 
 ---
 

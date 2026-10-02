@@ -19,6 +19,7 @@ export type EventDomain =
   | 'component'
   | 'project'
   | 'diff'
+  | 'export'
   | 'ai'
   | 'storage'
   | 'process'
@@ -80,6 +81,11 @@ export type AppEventType =
   | 'diff.computed'
   | 'diff.completed'
   | 'diff.failed'
+  | 'export.started'
+  | 'export.doc_generated'
+  | 'export.entry_written'
+  | 'export.completed'
+  | 'export.failed'
   | 'ai.config_saved'
   | 'ai.connection_started'
   | 'ai.connection_verified'
@@ -615,6 +621,48 @@ export interface DiffFailedPayload extends BaseEventPayload {
   message: string;
 }
 
+/**
+ * Project export lifecycle payloads (Phase 14). They carry modes, document
+ * names, entry paths, counts, and byte sizes only - NEVER document contents,
+ * file contents, or secrets.
+ */
+export interface ExportStartedPayload extends BaseEventPayload {
+  domain: 'export';
+  mode: 'zip' | 'folder';
+  /** Number of files the run intends to export (after doc merge). */
+  files: number;
+}
+
+export interface ExportDocGeneratedPayload extends BaseEventPayload {
+  domain: 'export';
+  /** Document name, e.g. `README.md`. */
+  name: string;
+  /** UTF-8 byte length of the document (never its contents). */
+  bytes: number;
+}
+
+export interface ExportEntryWrittenPayload extends BaseEventPayload {
+  domain: 'export';
+  /** POSIX-relative archive entry path (never absolute). */
+  path: string;
+  /** Bounded byte size of the entry. */
+  bytes: number;
+}
+
+export interface ExportCompletedPayload extends BaseEventPayload {
+  domain: 'export';
+  mode: 'zip' | 'folder';
+  entries: number;
+  bytes: number;
+  partial: boolean;
+}
+
+export interface ExportFailedPayload extends BaseEventPayload {
+  domain: 'export';
+  code: string;
+  message: string;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
@@ -688,6 +736,11 @@ export interface AppEventPayloadMap {
   'diff.computed': DiffComputedPayload;
   'diff.completed': DiffCompletedPayload;
   'diff.failed': DiffFailedPayload;
+  'export.started': ExportStartedPayload;
+  'export.doc_generated': ExportDocGeneratedPayload;
+  'export.entry_written': ExportEntryWrittenPayload;
+  'export.completed': ExportCompletedPayload;
+  'export.failed': ExportFailedPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;
