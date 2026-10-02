@@ -1,6 +1,10 @@
+import { useEffect } from 'react';
 import { PageShell } from '../components/layout/PageShell';
 import { Panel } from '../components/ui/Panel';
+import { AiProviderPanel } from '../components/settings/AiProviderPanel';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useAiStore } from '../stores/aiStore';
+import { getPreset } from '../services/ai';
 import { THEME_MODE_LABEL, type ThemeMode } from '../types/theme';
 import { IconMonitor, IconMoon, IconSun } from '../components/ui/icons';
 import { cn } from '../lib/cn';
@@ -16,6 +20,31 @@ export function SettingsRoute() {
   const setTheme = useSettingsStore((state) => state.setTheme);
   const compactDensity = useSettingsStore((state) => state.compactDensity);
   const setCompactDensity = useSettingsStore((state) => state.setCompactDensity);
+
+  const aiStatus = useAiStore((state) => state.status);
+  const aiConfig = useAiStore((state) => state.config);
+  const apiKeyInput = useAiStore((state) => state.apiKeyInput);
+  const hasStoredKey = useAiStore((state) => state.hasStoredKey);
+  const models = useAiStore((state) => state.models);
+  const aiError = useAiStore((state) => state.error);
+  const aiLoading = useAiStore((state) => state.loading);
+  const lastVerifiedAt = useAiStore((state) => state.lastVerifiedAt);
+
+  useEffect(() => {
+    void useAiStore.getState().loadConfig();
+  }, []);
+
+  const handleSelectPreset = (presetId: string) => {
+    const store = useAiStore.getState();
+    const preset = presetId === 'custom' ? null : getPreset(presetId);
+    store.setConfigField('providerId', presetId);
+    if (preset && preset.baseUrl) {
+      store.setConfigField('baseUrl', preset.baseUrl);
+    }
+    if (preset && preset.defaultModel) {
+      store.setConfigField('model', preset.defaultModel);
+    }
+  };
 
   return (
     <PageShell title="Settings" description="Application preferences, stored locally.">
@@ -79,20 +108,39 @@ export function SettingsRoute() {
           </p>
         </Panel>
 
+        <Panel title="AI provider">
+          <p className="mb-3 max-w-lg text-caption text-text-muted">
+            Connect any OpenAI-compatible endpoint (OpenAI, OpenRouter, Ollama, LM Studio, or a
+            custom gateway). The connection badge reflects only a verified health check.
+          </p>
+          <AiProviderPanel
+            status={aiStatus}
+            config={aiConfig}
+            apiKeyInput={apiKeyInput}
+            hasStoredKey={hasStoredKey}
+            models={models}
+            error={aiError}
+            loading={aiLoading}
+            lastVerifiedAt={lastVerifiedAt}
+            onChangeField={(key, value) => useAiStore.getState().setConfigField(key, value)}
+            onChangeApiKey={(value) => useAiStore.getState().setApiKeyInput(value)}
+            onSelectPreset={handleSelectPreset}
+            onSave={() => void useAiStore.getState().saveConfig()}
+            onTest={() => void useAiStore.getState().testConnection()}
+          />
+          <p className="mt-3 text-caption text-text-muted">
+            The API key is stored locally in the application database for this phase. Migration to
+            the OS keychain is deferred to Phase 15.
+          </p>
+        </Panel>
+
         <Panel title="Workspace">
           <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-0.5">
               <dt className="text-caption text-text-secondary">Local storage</dt>
               <dd className="text-body text-text-primary">Not configured (later phase)</dd>
             </div>
-            <div className="flex flex-col gap-0.5">
-              <dt className="text-caption text-text-secondary">AI provider</dt>
-              <dd className="text-body text-text-primary">Not configured (later phase)</dd>
-            </div>
           </dl>
-          <p className="mt-3 text-caption text-text-muted">
-            API keys will be stored in the OS keychain, never in files or the database.
-          </p>
         </Panel>
       </div>
     </PageShell>

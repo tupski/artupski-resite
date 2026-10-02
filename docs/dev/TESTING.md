@@ -224,6 +224,21 @@ The default suite covers the Blueprint schema, engine, persistence, and lifecycl
 
 The **opt-in** `src/workers/crawler/__tests__/blueprintCapture.e2e.test.ts` (gate `RUN_BROWSER_TESTS=1`, fixture port `3000`) launches real Chromium against `scripts/fixtures/blueprint/index.html` and asserts the evidence is bounded and contains the expected landmarks/headings/tokens/form/nav, that a huge DOM is flagged `truncated`, and - critically - that no planted secret (localStorage token, input `value`, hidden field) leaks into the evidence.
 
+### 5.8 Phase 10 AI engine test tier
+
+The default suite covers the provider client, token budgeting, payload isolation, the generation pipeline, configuration persistence, the store, and the settings panel **without any network access** (`fetch` is injected in unit tests):
+
+- `src/services/ai/__tests__/presets.test.ts` - the `AI-SPEC.md` §2.2 provider matrix, base-URL normalization (trailing slashes), and `validateBaseUrl` rejection of non-http(s), relative, whitespace, and **credential-in-URL** values.
+- `src/services/ai/__tests__/tokenBudget.test.ts` - `MODEL_BUDGET_PROFILES` lookup, the default fallback, the estimate heuristic, `getUsableInputBudget`, and `fitsInContext` boundaries.
+- `src/services/ai/__tests__/payload.test.ts` + `systemPrompt` - data-URI truncation, recursive sanitization, boundary escaping (an injected `</DATA_PAYLOAD>` cannot break out), and the verbatim `AI-SPEC.md` §5.1 security directives.
+- `src/services/ai/__tests__/pipeline.test.ts` - raw + fenced JSON extraction, Zod validation, the bounded repair pass (success and exhaustion), over-budget rejection (`CONTEXT_LENGTH_EXCEEDED`, no provider call), and provider-throw mapping.
+- `src/services/ai/__tests__/provider.test.ts` - chat completion mapping (usage/finish reason/model), `baseUrl` normalization + bearer header, SSE stream assembly, HTTP→`StructuredError` mapping (401/403/429/400), and **key redaction** in error messages.
+- `src/services/ai/__tests__/config.test.ts` - config round-trip over an in-memory settings accessor, invalid-base-URL rejection, and **secret isolation** (`ai.credentials` separate from `ai.config`).
+- `src/services/ai/__tests__/engine.test.ts` - health verified/failed transitions and the `ai.*` event sequences, plus `saveConfig` emitting `hasApiKey` only (the key is never in the config blob or event).
+- `src/stores/aiStore.test.ts` + `src/components/settings/AiProviderPanel.test.tsx` - honest `unconfigured | idle | testing | ready | error` states, the no-fabricated-connection guarantee, key masking, and the bounded model list.
+
+The **opt-in** `src/services/ai/__tests__/aiEngine.e2e.test.ts` (gate `RUN_AI_TESTS=1`, `@vitest-environment node`) boots a real local OpenAI-compatible HTTP server (`node:http`, `127.0.0.1:7331`) and drives the full stack over a real socket: `/models` health check, a typed non-streaming completion, and a schema-constrained generation task returning valid structured JSON. It touches no external network.
+
 **Responsive capture (Phase 7, as built)**: `src/services/scanner/responsiveScanner.test.ts` covers profile selection, path sanitisation, and orchestration (including the honest skip-on-failure path). `src/services/storage/__tests__/responsiveCaptures.test.ts` covers the migration + repository (one-per-page/profile, cascade, reopen). `src/services/infra/workerProtocol.test.ts` validates the `captureViewport` wire shape (including the profile bounds). The opt-in `src/workers/crawler/__tests__/responsiveCapture.e2e.test.ts` renders the responsive fixture at desktop AND mobile and asserts the captures are distinct (different screenshot bytes; `nav` visible on desktop, hidden on mobile) with detected media-query breakpoints.
 
 Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):

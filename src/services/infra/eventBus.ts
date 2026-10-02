@@ -17,6 +17,7 @@ export type EventDomain =
   | 'blueprint'
   | 'clone'
   | 'project'
+  | 'ai'
   | 'storage'
   | 'process'
   | 'browser'
@@ -68,6 +69,13 @@ export type AppEventType =
   | 'project.started'
   | 'project.file_generated'
   | 'project.completed'
+  | 'ai.config_saved'
+  | 'ai.connection_started'
+  | 'ai.connection_verified'
+  | 'ai.connection_failed'
+  | 'ai.generation_started'
+  | 'ai.generation_completed'
+  | 'ai.generation_failed'
   | 'process.spawning'
   | 'process.ready'
   | 'process.busy'
@@ -420,6 +428,62 @@ export interface CloneFailedPayload extends BaseEventPayload {
   message: string;
 }
 
+/**
+ * AI engine lifecycle payloads (Phase 10). They carry provider id, model, and
+ * counts only - NEVER the API key, request headers, or prompt/completion content.
+ */
+export interface AiConfigSavedPayload extends BaseEventPayload {
+  domain: 'ai';
+  providerId: string;
+  /** True when a non-empty API key is currently stored (never the key itself). */
+  hasApiKey: boolean;
+  /** Model id only; the base URL is omitted to avoid leaking internal origins. */
+  model: string;
+}
+
+export interface AiConnectionStartedPayload extends BaseEventPayload {
+  domain: 'ai';
+  providerId: string;
+}
+
+export interface AiConnectionVerifiedPayload extends BaseEventPayload {
+  domain: 'ai';
+  providerId: string;
+  modelCount: number;
+}
+
+export interface AiConnectionFailedPayload extends BaseEventPayload {
+  domain: 'ai';
+  providerId: string;
+  code: string;
+  /** Bounded, redacted message (never a key or request header). */
+  message: string;
+}
+
+export interface AiGenerationStartedPayload extends BaseEventPayload {
+  domain: 'ai';
+  providerId: string;
+  /** Logical task name (e.g. "component.synthesize"). */
+  taskName: string;
+}
+
+export interface AiGenerationCompletedPayload extends BaseEventPayload {
+  domain: 'ai';
+  providerId: string;
+  taskName: string;
+  /** Number of model round-trips performed (1 + repair passes). */
+  attempts: number;
+  totalTokens: number;
+}
+
+export interface AiGenerationFailedPayload extends BaseEventPayload {
+  domain: 'ai';
+  providerId: string;
+  taskName: string;
+  code: string;
+  message: string;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
@@ -474,6 +538,13 @@ export interface AppEventPayloadMap {
   'blueprint.generated': BlueprintGeneratedPayload;
   'blueprint.validation_failed': BlueprintValidationFailedPayload;
   'blueprint.completed': BlueprintCompletedPayload;
+  'ai.config_saved': AiConfigSavedPayload;
+  'ai.connection_started': AiConnectionStartedPayload;
+  'ai.connection_verified': AiConnectionVerifiedPayload;
+  'ai.connection_failed': AiConnectionFailedPayload;
+  'ai.generation_started': AiGenerationStartedPayload;
+  'ai.generation_completed': AiGenerationCompletedPayload;
+  'ai.generation_failed': AiGenerationFailedPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;

@@ -61,6 +61,15 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
 - Structures prompts for component extraction, blueprint generation, code conversion, and test generation.
 - Handles token streaming, schema validation via JSON-mode/Zod, and retry policies.
 
+#### 3.2a AI Provider Abstraction (as built, Phase 10)
+- **Seam**: `src/services/ai/` — `provider.ts` (`OpenAICompatibleProvider`), `presets.ts` (provider matrix + base-URL policy), `tokenBudget.ts` (`TokenBudgetManager`), `payload.ts` (untrusted-data isolation), `prompts/systemPrompt.ts` (defensive directives), `pipeline.ts` (`GenerationPipeline`), `config.ts` (`app_settings` persistence), `engine.ts` (`createAiEngine`). The public surface is `src/services/ai/index.ts`; consumers depend on the `IAIProvider` contract (`src/types/ai.ts`), never a concrete vendor.
+- **Wire protocol**: `GET {baseUrl}/models` (health/`listModels`) and `POST {baseUrl}/chat/completions` (non-streaming + SSE streaming), OpenAI-compatible, `response_format: { type: 'json_object' }`, per-request timeouts and abort signals. `fetch` is injectable so the wire path is fully testable without a network. This is a **main-process TypeScript service** — no worker, no Rust command, and `WORKER_PROTOCOL_VERSION` is unchanged.
+- **Generation**: `GenerationPipeline` sanitizes + wraps the payload in `<DATA_PAYLOAD>` (embedded boundary tags escaped), guards the token budget, requests JSON, extracts (raw or fenced) JSON, validates with Zod, and runs bounded self-repair passes. Every failure is returned as a `StructuredError` in the reserved `ai` category (`API_KEY_INVALID`, `RATE_LIMIT_EXCEEDED`, `CONTEXT_LENGTH_EXCEEDED`, `MALFORMED_OUTPUT`, `IPC_ERROR`); the API key is never included.
+- **Configuration & secrets**: AI settings live in the existing `app_settings` table (`ai.config`, `ai.credentials`) — **no migration**. The key is stored under a separate key, never logged, never emitted in events, and masked in the UI.
+- **Events**: a bounded `ai.*` domain (`config_saved`, `connection_started|verified|failed`, `generation_started|completed|failed`) carrying ids/counts only.
+- **UI seam**: `src/stores/aiStore.ts` mirrors the persisted config and the last real health check with honest `unconfigured | idle | testing | ready | error` states; `src/components/settings/AiProviderPanel.tsx` renders the provider form and connection test in `SettingsRoute`. The React UI never imports the provider internals.
+- **Deferred**: component synthesis (Phase 11), project generation (Phase 12), visual diffing (Phase 13), doc/ZIP export (Phase 14), OS-keychain credential storage (Phase 15), and scan-lifecycle integration of the engine.
+
 ### 3.3 Clone Engine
 - Processes network responses and DOM assets.
 - Sanitizes file paths, handles asset deduplication, and writes clean local directories.

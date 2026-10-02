@@ -1,0 +1,174 @@
+import { describe, expect, it } from 'vitest';
+import { OpenAICompatibleProvider, type FetchLike } from '../provider';
+
+/** Build a Response-like object without depending on a live server. */
+function jsonResponse(
+  body: unknown,
+  init: { status?: number; statusText?: string } = {}
+): Response {
+  const status = init.status ?? 200;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: init.statusText ?? 'OK',
+    json: async () => body,
+    text: async () => JSON.stringify(body)
+  } as unknown as Response;
+}
+
+function sseResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      controller.close();
+    }
+  });
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    body: stream
+  } as unknown as Response;
+}
+
+const CONFIG = {
+  baseUrl: 'https://api.example.com/v1/',
+  apiKey: 'sk-secret-value',
+  defaultModel: 'gpt-4o-mini'
+};
+
+describe('OpenAICompatibleProvider.chatCompletion (AI-SPEC.md 1.2)', () => {
+  it('maps a completion response, usage, and finish reason', async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse({
+        choices: [{ message: { content: '{"ok":true}' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        model: 'gpt-4o-mini'
+      });
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    const result = await provider.chatCompletion([{ role: 'user', content: 'hi' }]);
+    expect(result.content).toBe('{"ok":true}');
+    expect(result.usage.totalTokens).toBe(15);
+    expect(result.finishReason).toBe('stop');
+    expect(result.model).toBe('gpt-4o-mini');
+  });
+
+  it('sends the bearer token and normalizes the base URL (no double slash)', async () => {
+    let seenUrl = '';
+    let seenAuth = '';
+    const fetchImpl: FetchLike = async (url, init) => {
+      seenUrl = url;
+      seenAuth = String((init?.headers as Record<string, string>).Authorization);
+      return jsonResponse({ choices: [{ message: { content: 'x' } }] });
+    };
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    await provider.chatCompletion([{ role: 'user', content: 'hi' }]);
+    expect(seenUrl).toBe('https://api.example.com/v1/chat/completions');
+    expect(seenAuth).toBe('Bearer sk-secret-value');
+  });
+
+  it('maps 401 to API_KEY_INVALID without leaking the key', async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse({ error: 'unauthorized' }, { status: 401, statusText: 'Unauthorized' });
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    await expect(provider.chatCompletion([{ role: 'user', content: 'hi' }])).rejects.toMatchObject({
+      code: 'API_KEY_INVALID',
+      category: 'ai'
+    });
+    try {
+      await provider.chatCompletion([{ role: 'user', content: 'hi' }]);
+    } catch (error) {
+      expect((error as { message: string }).message).not.toContain('sk-secret-value');
+    }
+  });
+
+  it('maps 429 to RATE_LIMIT_EXCEEDED', async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse('slow down', { status: 429, statusText: 'Too Many Requests' });
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    await expect(provider.chatCompletion([{ role: 'user', content: 'hi' }])).rejects.toMatchObject({
+      code: 'RATE_LIMIT_EXCEEDED'
+    });
+  });
+
+  it('maps a context-length 400 to CONTEXT_LENGTH_EXCEEDED', async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse('maximum context length exceeded', { status: 400, statusText: 'Bad Request' });
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    await expect(provider.chatCompletion([{ role: 'user', content: 'hi' }])).rejects.toMatchObject({
+      code: 'CONTEXT_LENGTH_EXCEEDED'
+    });
+  });
+});
+
+describe('OpenAICompatibleProvider.streamChatCompletion (SSE)', () => {
+  it('assembles streamed deltas and invokes onChunk per delta', async () => {
+    const fetchImpl: FetchLike = async () =>
+      sseResponse([
+        'data: {"choices":[{"delta":{"content":"{\\"a\\":"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"1}"},"finish_reason":"stop"}]}\n\n',
+        'data: [DONE]\n\n'
+      ]);
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    const received: string[] = [];
+    const result = await provider.streamChatCompletion([{ role: 'user', content: 'hi' }], (chunk) =>
+      received.push(chunk)
+    );
+    expect(received.join('')).toBe('{"a":1}');
+    expect(result.content).toBe('{"a":1}');
+    expect(result.finishReason).toBe('stop');
+  });
+});
+
+describe('OpenAICompatibleProvider.listModels / validateCredentials', () => {
+  it('lists model ids from the /models endpoint', async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse({ data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }] });
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    expect(await provider.listModels()).toEqual(['gpt-4o', 'gpt-4o-mini']);
+  });
+
+  it('validateCredentials is valid on a reachable endpoint even with no models', async () => {
+    const fetchImpl: FetchLike = async () => jsonResponse({ data: [] });
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    expect(await provider.validateCredentials()).toEqual({ valid: true });
+  });
+
+  it('validateCredentials reports an error when the endpoint fails', async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse({ error: 'nope' }, { status: 403, statusText: 'Forbidden' });
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    const result = await provider.validateCredentials();
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+});
+
+describe('OpenAICompatibleProvider transport failures', () => {
+  it('maps a network error to a retryable ai-category error', async () => {
+    const fetchImpl: FetchLike = async () => {
+      throw new Error('ECONNREFUSED');
+    };
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    await expect(provider.chatCompletion([{ role: 'user', content: 'hi' }])).rejects.toMatchObject({
+      code: 'IPC_ERROR',
+      category: 'ai',
+      retryable: true
+    });
+  });
+
+  it('maps a timeout (AbortError) to CONNECTION_TIMED_OUT', async () => {
+    const fetchImpl: FetchLike = async () => {
+      const err = new Error('aborted');
+      err.name = 'AbortError';
+      throw err;
+    };
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    await expect(provider.chatCompletion([{ role: 'user', content: 'hi' }])).rejects.toMatchObject({
+      code: 'CONNECTION_TIMED_OUT'
+    });
+  });
+});

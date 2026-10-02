@@ -299,6 +299,7 @@ Delivered on top of the Phase 4 crawler, Phase 6 technology detection, and Phase
 ---
 
 ## Phase 10: AI Provider Abstraction & Engine
+- **Status**: COMPLETE (see the Phase 10 implementation note below and `docs/impl-plan/phase-10-impl-plan.md`).
 - **Goal**: Integrate unified AI client for cloud and local inference models.
 - **Scope**: OpenAI-compatible REST client, prompt templates, token stream parsing, fallback handling.
 - **Dependencies**: Phase 1, Phase 9.
@@ -311,6 +312,18 @@ Delivered on top of the Phase 4 crawler, Phase 6 technology detection, and Phase
 - **Acceptance Criteria**: Successfully communicate with local Ollama or OpenAI endpoint and return valid structured JSON.
 - **Potential Risks**: Model hallucinations or malformed JSON responses on smaller local models.
 - **Verification**: Run prompt against test endpoint; verify valid typed object returned.
+
+### Phase 10 Implementation Notes (as built)
+
+Delivered as a **provider-agnostic AI engine** in the TypeScript layer. The roadmap's illustrative path `src/services/ai/aiClient.ts` was superseded by a small module tree under `src/services/ai/` (recorded in `docs/impl-plan/phase-10-impl-plan.md`): `provider.ts` (`OpenAICompatibleProvider`), `presets.ts`, `tokenBudget.ts`, `payload.ts`, `prompts/systemPrompt.ts`, `pipeline.ts` (`GenerationPipeline`), `config.ts`, `engine.ts`, and `errors.ts`. The public surface is re-exported from `src/services/ai/index.ts`; no consumer imports a concrete provider.
+
+- **Provider client**: one OpenAI-compatible client for `/models` and `/chat/completions`, supporting custom `AI_BASE_URL`/`AI_API_KEY`/`AI_MODEL`, non-streaming and SSE **streaming**, JSON-object response format, per-request timeouts, and abort signals. `fetch` is injectable for tests.
+- **Presets & health check**: the `AI-SPEC.md` §2.2 matrix (OpenAI, OpenRouter, 9Router, Ollama, LM Studio, LocalAI/vLLM) plus custom base URLs. `validateBaseUrl` enforces http(s) and rejects credentials-in-URL; `validateCredentials()`/`listModels()` perform a real `/models` round-trip.
+- **Structured output**: `GenerationPipeline` wraps the untrusted payload in `<DATA_PAYLOAD>` (embedded closing tags escaped), guards the token budget, requests `json_object`, extracts JSON (raw or fenced), validates with Zod, and runs **bounded self-repair** passes before failing honestly with `MALFORMED_OUTPUT`. `TokenBudgetManager` implements the `MODEL_BUDGET_PROFILES` from `AI-SPEC.md` §3.1.
+- **Persistence**: AI config + key live in the existing `app_settings` table (`ai.config`, `ai.credentials`) — **no migration**. The key is stored under a separate key, never logged, never emitted in events, and masked in the UI.
+- **Events**: a new, bounded `ai.*` domain (`config_saved`, `connection_started|verified|failed`, `generation_started|completed|failed`) carrying ids/counts only — never secrets or prompt/completion content.
+- **UI seam**: `src/stores/aiStore.ts` mirrors the persisted config and the last real health check with honest `unconfigured|idle|testing|ready|error` states; `src/components/settings/AiProviderPanel.tsx` renders the configuration form and a truthful connection badge (no fabricated "connected" state).
+- **Deferred**: component/HTML→React synthesis (Phase 11), full project generation (Phase 12), visual diffing (Phase 13), doc/ZIP export (Phase 14), and OS-keychain credential storage (Phase 15). Phase 10 does not wire the engine into the scan lifecycle; the Blueprint remains the sole post-crawl output.
 
 ---
 

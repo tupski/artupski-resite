@@ -63,3 +63,4 @@ guidelines and history, see the root files: [`AGENTS.md`](../AGENTS.md),
 | :--- | :--- |
 | [`phase-8-impl-plan.md`](impl-plan/phase-8-impl-plan.md) | Static clone engine & local asset server (Phase 8): files, migration, protocol, tests, risks, and the C3-C7 decision resolutions. |
 | [`phase-9-impl-plan.md`](impl-plan/phase-9-impl-plan.md) | Website blueprint specification & normalization engine (Phase 9): prerequisite evidence capture, schema, engine, migration `008`, protocol, tests, risks, and the C8-C13 decision resolutions. |
+| [`phase-10-impl-plan.md`](impl-plan/phase-10-impl-plan.md) | AI provider abstraction & engine (Phase 10): OpenAI-compatible client, presets, token budgeting, defensive payload isolation, Zod generation pipeline, `app_settings` persistence, events, tests, and security/non-goals. |
