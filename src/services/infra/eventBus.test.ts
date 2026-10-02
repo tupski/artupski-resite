@@ -69,9 +69,7 @@ describe('EventBus', () => {
 
 describe('isBaseEventPayload', () => {
   it('accepts a well-formed envelope', () => {
-    expect(
-      isBaseEventPayload({ eventId: '1', timestamp: 'now', domain: 'app' })
-    ).toBe(true);
+    expect(isBaseEventPayload({ eventId: '1', timestamp: 'now', domain: 'app' })).toBe(true);
   });
 
   it('rejects objects missing required fields', () => {
@@ -82,7 +80,8 @@ describe('isBaseEventPayload', () => {
 
 describe('createEvent', () => {
   it('derives the domain from the event type and stamps the envelope', () => {
-    const event = createEvent('project.completed', {});
+    // Phase 12 gave `project.completed` a concrete payload contract.
+    const event = createEvent('project.completed', { files: 0, bytes: 0, partial: false });
     expect(event.payload.domain).toBe('project');
     expect(event.payload.eventId).toBeTruthy();
     expect(event.payload.timestamp).toBeTruthy();

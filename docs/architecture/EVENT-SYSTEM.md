@@ -32,7 +32,11 @@ Standardized event key structure: `<domain>.<action_or_state>`.
 - `clone.*`: Local HTML path rewriting, web server serving, static preview (`clone.started`, `clone.file_generated`, `clone.asset_downloaded`, `clone.server_started`, `clone.server_stopped`, `clone.completed`, `clone.failed`).
 - `ai.*`: Provider configuration, connection/health checks, and schema-constrained generation lifecycle (`ai.config_saved`, `ai.connection_started`, `ai.connection_verified`, `ai.connection_failed`, `ai.generation_started`, `ai.generation_completed`, `ai.generation_failed`). Payloads carry provider id, model, and counts only — **never** the API key, request headers, or prompt/completion content.
 - `component.*`: AI component synthesis lifecycle (`component.started`, `component.generated`, `component.failed`, `component.completed`). Payloads carry component ids, names, counts, and code length only — **never** the generated code, prompt content, or Blueprint evidence.
-- `project.*`: Codebase generation, file writing, package installation.
+- `project.*`: Codebase generation, file writing, package installation. Phase 12 implements the
+  generator's file-writing lifecycle: `project.started` (file/component/route counts),
+  `project.file_generated` (POSIX-relative `path` + `bytes`), and `project.completed`
+  (file/byte totals + `partial`). Payloads carry paths, counts, and byte sizes only — **never** file
+  contents. Package installation/build is not run by the app; it is the generated project's own step.
 - `storage.*`: Local database initialization, migration lifecycle, readiness.
 - `process.*`: Child-process lifecycle (spawn/ready/busy/stopping/stopped/exited/failed).
 - `browser.*`: Browser runtime detection and controlled session lifecycle.

@@ -45,3 +45,22 @@ export {
   hasUnusedImports,
   type TsxAssessment
 } from './jsxCleanliness';
+
+export {
+  generateProject,
+  createProjectIoError,
+  type ProjectGeneratorDeps,
+  type ProjectGenerationEventSink
+} from './projectGenerator';
+
+export {
+  isSafeProjectRelativePath,
+  pathDepth,
+  resolveWithinRoot,
+  safeAssetPath,
+  safeComponentFileName,
+  safeExtension,
+  safeHookFileName,
+  slugifyPathSegment,
+  toPascalCase
+} from './projectPaths';

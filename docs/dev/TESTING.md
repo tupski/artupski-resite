@@ -251,6 +251,34 @@ The default suite covers the prompt, payload projection, output contract, cleanl
 
 All Phase 11 tests use deterministic fixtures and a scripted/JSON engine; none require an API key.
 
+### 5.10 Phase 12 project generator test tier
+
+The default suite covers the generator structure, Blueprint integration, component/hook/asset
+assembly, standalone independence, path safety, resource limits, failure isolation, and events —
+**without any network access** and writing only into per-case `node:fs` temp directories:
+
+- `src/services/generator/__tests__/projectGenerator.test.ts` — expected boilerplate files/dirs, a
+  valid `package.json` free of ReSite-only dependencies, determinism, route injection, missing-page
+  drop-with-reason, token integration (no fabrication), invalid-Blueprint refusal, component/hook
+  assembly with resolving relative imports, duplicate-name resolution, malformed-component skip,
+  asset copy/skip, no ReSite runtime import in any generated source, `project.*` events, abort
+  handling, and the never-throws boundary. `projectFixtures.ts` holds deterministic fixtures.
+- `src/services/generator/__tests__/projectPaths.test.ts` — traversal, absolute, Windows drive, UNC,
+  backslash, control-character, and empty-segment rejection; `resolveWithinRoot` confinement
+  (including sibling-prefix escapes); asset/component/hook filename derivation.
+- `src/services/generator/__tests__/projectGenerator.limits.test.ts` — excessive file count, oversized
+  single file, excessive total output, and the component cap; nothing is written when a limit is
+  breached.
+- `src/services/generator/__tests__/projectGenerator.failure.test.ts` — a target inside a file (io
+  error), invalid Blueprint (no writes), partial marking on skip, and abort (`keepPartial` true/false).
+
+The **opt-in** `src/services/generator/__tests__/projectGenerator.build.e2e.test.ts` (gate
+`RUN_PROJECT_BUILD=1`) is the authoritative Phase 12 verification: it generates a real project into
+an isolated temp directory and runs the generated project's **own** `npm install` + `npm run build`
+(never mocked), asserting the build exits 0 and `dist/index.html` exists. Set `KEEP_PROJECT_BUILD=1`
+to preserve the generated directory. If npm cannot run in the environment, the suite reports BLOCKED
+(skipped) rather than a false PASS.
+
 **Responsive capture (Phase 7, as built)**: `src/services/scanner/responsiveScanner.test.ts` covers profile selection, path sanitisation, and orchestration (including the honest skip-on-failure path). `src/services/storage/__tests__/responsiveCaptures.test.ts` covers the migration + repository (one-per-page/profile, cascade, reopen). `src/services/infra/workerProtocol.test.ts` validates the `captureViewport` wire shape (including the profile bounds). The opt-in `src/workers/crawler/__tests__/responsiveCapture.e2e.test.ts` renders the responsive fixture at desktop AND mobile and asserts the captures are distinct (different screenshot bytes; `nav` visible on desktop, hidden on mobile) with detected media-query breakpoints.
 
 Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):

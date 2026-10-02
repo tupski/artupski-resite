@@ -84,6 +84,16 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
 ### 3.4 Project Generator
 - Template-driven code generation engine.
 - Transforms blueprint component trees into idiomatic React components, Tailwind utility classes, and TypeScript interfaces. It reuses the Phase 11 component synthesizer (§3.2b) for component code; the deterministic Prettier formatting step and atomic disk emission (`PROJECT-GENERATOR-SPEC.md` §4) remain Phase 12 work.
+- **As built (Phase 12)**: `src/services/generator/projectGenerator.ts` (`generateProject`) assembles a
+  complete **Vite + React 18 + TS 5 + Tailwind 3** project beneath one `targetRoot`, consuming a
+  validated `Blueprint` + Phase 11 `SynthesizedComponent[]` (+ optional hooks/assets). Templates live
+  in `src/templates/project/`; path safety/derivation in `src/services/generator/projectPaths.ts`;
+  types in `src/types/projectGen.ts`. The generated project is standalone (no ReSite/Tauri/store/DB
+  imports) and builds via its own `npm install && npm run build`. **Main-process TypeScript only** —
+  no worker, no Rust command, `WORKER_PROTOCOL_VERSION` unchanged.
+- **Deviations from `PROJECT-GENERATOR-SPEC.md` §4**: no Prettier formatting pass (Phase 11 already
+  normalizes emitted TSX via `jsxCleanliness`) and no `build_tmp` directory rename — instead every
+  generated file is validated up front and written atomically per file within the root.
 
 ### 3.5 Local Storage Subsystem
 - SQLite embedded database.

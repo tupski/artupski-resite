@@ -386,6 +386,7 @@ roadmap's illustrative paths were kept (`src/services/ai/prompts/componentPrompt
 ---
 
 ## Phase 12: Full-Stack Project Generator (Vite + React + TS + Tailwind)
+- **Status**: COMPLETE (see the Phase 12 implementation note below and `docs/impl-plan/phase-12-impl-plan.md`).
 - **Goal**: Assemble complete, runnable project repository from generated components and blueprint.
 - **Scope**: Project file structure generator, package manifest, router config, design tokens integration.
 - **Dependencies**: Phase 11.
@@ -398,6 +399,52 @@ roadmap's illustrative paths were kept (`src/services/ai/prompts/componentPrompt
 - **Acceptance Criteria**: Generated project builds cleanly without TypeScript or Vite errors.
 - **Potential Risks**: Missing dependencies or broken relative import paths.
 - **Verification**: Open generated project directory in terminal; run build and verify `dist/` created.
+
+### Phase 12 Implementation Notes (as built)
+
+Delivered as a **service-layer project generator** in the TypeScript layer plus a template tree. The
+roadmap's illustrative paths were kept (`src/services/generator/projectGenerator.ts`,
+`src/templates/project/`); the generator module tree adds `projectPaths.ts` (path safety & derivation)
+and re-exports from `src/services/generator/index.ts`. Types live in `src/types/projectGen.ts`.
+**No new worker, IPC command, database migration, or runtime dependency was created**, and
+`WORKER_PROTOCOL_VERSION` stays `1`.
+
+- **Input**: a **validated** `Blueprint` (Phase 9) plus the Phase 11 `SynthesizedComponent[]` (and
+  optional hook/asset inputs). The generator validates untrusted Blueprint input with
+  `validateBlueprint` and refuses an invalid document without writing anything.
+- **Generated project (Vite + React 18 + TS 5 + Tailwind 3)**: `index.html`, `package.json`,
+  `tsconfig.json`/`tsconfig.node.json`, `vite.config.ts`, `tailwind.config.ts`,
+  `postcss.config.js`, `.gitignore`, `src/main.tsx`, `src/App.tsx`, `src/router.tsx`,
+  `src/tokens.ts`, `src/styles/index.css`, `src/components/*`, `src/hooks/*`, `src/pages/*`, and
+  `public/assets/*`. The generated project depends only on React, React Router, `clsx`, and
+  `tailwind-merge` — no `@tauri-apps/*`, `zustand`, `sql.js`, or other ReSite runtime imports.
+- **Routes**: Blueprint routes are injected into a `createBrowserRouter` config; each route maps to a
+  generated page component rendered through a shared `App` layout. A route referencing a missing page
+  is **dropped with a recorded reason** (`missing_page`/`duplicate_path`/`invalid_path`); required
+  component props are filled with neutral Blueprint defaults so pages type-check.
+- **Design tokens**: the Blueprint `design_system` is projected verbatim into `src/tokens.ts` (Tailwind
+  theme extension) and CSS custom properties in `src/styles/index.css`; absent categories are empty,
+  and no token is fabricated.
+- **Security**: every generated path is resolved and confined to a single `targetRoot`
+  (`projectPaths.resolveWithinRoot`), rejecting `..`, absolute paths, Windows drive paths, UNC paths,
+  backslashes, and control characters. Emission is staged (all files validated before any write) and
+  atomic per file. Bounded resource limits: `MAX_PROJECT_FILES` (2000), `MAX_PROJECT_FILE_BYTES`
+  (1 MiB), `MAX_PROJECT_TOTAL_BYTES` (64 MiB), `MAX_PROJECT_COMPONENTS` (500), `MAX_PROJECT_ASSETS`
+  (500), `MAX_PROJECT_PATH_DEPTH` (16). Generated code is never executed during generation.
+- **Failure isolation**: a malformed component/asset is skipped and reported, marking the run
+  `partial`; cancellation returns `aborted: true` and removes the partial root unless `keepPartial`.
+- **Events**: `src/services/infra/eventBus.ts` adds the bounded `project.*` domain (`started`,
+  `file_generated`, `completed`) carrying paths/counts/bytes only — never file contents.
+- **Tests**: `src/services/generator/__tests__/projectGenerator*.test.ts` and `projectPaths.test.ts`
+  cover structure, routes/tokens, component/hook/asset assembly, independence, path safety, limits,
+  failure isolation, and events. The opt-in build E2E
+  (`projectGenerator.build.e2e.test.ts`, `RUN_PROJECT_BUILD=1`) runs a real `npm install && npm run
+  build` inside a generated project and asserts `dist/` exists — verified PASS in this phase.
+- **Deferred**: visual diffing (Phase 13), doc/ZIP export (Phase 14). No Phase 12 UI or persistence
+  was added (`PLAN.md` names only the generator service + templates).
+- **Recorded deviations** (see `docs/impl-plan/phase-12-impl-plan.md` §11): **Vite only** (not the
+  spec's multi-framework adapter table); **no Prettier pass** (Phase 11 already normalizes TSX);
+  **no `build_tmp` directory rename** (all-files-validated-then-atomic-per-file write instead).
 
 ---
 

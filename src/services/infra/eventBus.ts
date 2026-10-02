@@ -528,6 +528,39 @@ export interface ComponentCompletedPayload extends BaseEventPayload {
   partial: boolean;
 }
 
+/**
+ * Project generation lifecycle payloads (Phase 12). They carry file paths,
+ * counts, and byte sizes only - NEVER generated file contents or Blueprint
+ * evidence.
+ */
+export interface ProjectStartedPayload extends BaseEventPayload {
+  domain: 'project';
+  /** Number of files the run intends to write (after planning). */
+  files: number;
+  /** Number of components assembled into the project. */
+  components: number;
+  /** Number of routes injected into the router. */
+  routes: number;
+}
+
+export interface ProjectFileGeneratedPayload extends BaseEventPayload {
+  domain: 'project';
+  /** POSIX-relative path of the written file (never absolute). */
+  path: string;
+  /** Bounded byte size of the written file. */
+  bytes: number;
+}
+
+export interface ProjectCompletedPayload extends BaseEventPayload {
+  domain: 'project';
+  /** Number of files actually written. */
+  files: number;
+  /** Total bytes written. */
+  bytes: number;
+  /** True when any artifact was skipped or any route dropped. */
+  partial: boolean;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
@@ -593,6 +626,9 @@ export interface AppEventPayloadMap {
   'component.generated': ComponentGeneratedPayload;
   'component.failed': ComponentFailedPayload;
   'component.completed': ComponentCompletedPayload;
+  'project.started': ProjectStartedPayload;
+  'project.file_generated': ProjectFileGeneratedPayload;
+  'project.completed': ProjectCompletedPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;

@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 12 - Full-stack project generator (Vite + React + TS + Tailwind)
+
+Assembles a complete, runnable, **standalone** Vite + React 18 + TypeScript 5 + Tailwind 3 project
+from a validated Phase 9 Blueprint plus the Phase 11 synthesized components (and optional hook/asset
+inputs). It is an opt-in **service-layer** increment: **no new worker, IPC command, database
+migration, or runtime dependency**, and `WORKER_PROTOCOL_VERSION` stays `1`.
+
+- **Generator service**: `src/services/generator/projectGenerator.ts` exposes `generateProject(deps,
+  input)`; it is deterministic, provider-agnostic (no AI import), never executes generated code, and
+  never throws past its boundary. Types live in `src/types/projectGen.ts`.
+- **Templates**: `src/templates/project/` renders `index.html`, `package.json`, `tsconfig.json` /
+  `tsconfig.node.json`, `vite.config.ts`, `tailwind.config.ts`, `postcss.config.js`, `.gitignore`,
+  `src/main.tsx`, `src/App.tsx`, `src/router.tsx`, `src/tokens.ts`, and `src/styles/index.css`. The
+  generated project depends only on React, React Router, `clsx`, and `tailwind-merge`.
+- **Routes**: Blueprint routes feed a generated `createBrowserRouter` config; a route referencing a
+  missing page is dropped with a recorded reason; required component props are filled with neutral
+  Blueprint defaults so pages type-check.
+- **Design tokens**: the Blueprint `design_system` is projected verbatim into `src/tokens.ts` (Tailwind
+  theme extension) and CSS custom properties; absent categories are empty and nothing is fabricated.
+- **Security & limits**: `src/services/generator/projectPaths.ts` confines every generated path to a
+  single `targetRoot`, rejecting `..`, absolute, Windows drive, UNC, backslash, and control-character
+  paths. Emission is staged (validate all, then atomic per-file writes). Bounded caps:
+  `MAX_PROJECT_FILES` (2000), `MAX_PROJECT_FILE_BYTES` (1 MiB), `MAX_PROJECT_TOTAL_BYTES` (64 MiB),
+  `MAX_PROJECT_COMPONENTS` (500), `MAX_PROJECT_ASSETS` (500), `MAX_PROJECT_PATH_DEPTH` (16).
+- **Failure isolation**: malformed components/assets are skipped and reported (`partial`); an invalid
+  Blueprint writes nothing; cancellation returns `aborted: true` and removes the partial root unless
+  `keepPartial`.
+- **Events**: `project.started`, `project.file_generated`, `project.completed` added to the EventBus
+  payload map (`src/services/infra/eventBus.ts`); payloads carry paths/counts/bytes only, never file
+  contents.
+- **Tests**: focused `projectGenerator*.test.ts` + `projectPaths.test.ts` suites, plus an opt-in real
+  build E2E (`projectGenerator.build.e2e.test.ts`, `RUN_PROJECT_BUILD=1`) that runs the generated
+  project's own `npm install && npm run build` and asserts `dist/` exists — verified PASS.
+- **Deviations**: Vite only (not the spec's multi-framework adapter table); no Prettier pass; no
+  `build_tmp` directory rename. See `docs/impl-plan/phase-12-impl-plan.md` §11.
+
 ### Phase 11 - AI-powered component extraction & synthesis
 
 Turns a validated Phase 9 Blueprint into clean React + Tailwind TSX components using the Phase 10
