@@ -32,11 +32,12 @@ Unit tests execute in isolation using Vitest. Target 95%+ coverage on determinis
 - Fixtures: deterministic, inline, browser-free (no public websites).
 
 ### 2.2 Blueprint Zod Schema Validation
-- Path: `src/services/blueprint/__tests__/schemaValidator.test.ts`
+- Path: `src/services/blueprint/__tests__/schema.test.ts` (as built; supersedes the illustrative `schemaValidator.test.ts` path). The validator itself is `src/types/blueprint.ts` (`BlueprintSchema`, `validateBlueprint`).
 - Tests:
-  - Validate valid blueprint JSON documents against `SiteBlueprintSchema`.
-  - Validate schema rejection and descriptive error paths on missing node types, invalid color hexes, or missing layout coordinates.
-  - Test backward-compatibility schema migrations.
+  - Validate valid blueprint JSON documents against `BlueprintSchema`.
+  - Validate schema rejection and descriptive error paths on missing/unknown sections (`.strict()`), bad enums/URLs, and an unsupported `blueprint_version` (`UNSUPPORTED_VERSION`).
+  - Enforce bounded recursion (component depth, cycles, unknown child refs, page/route/component counts, navigation depth) and confirm the optional additive `provenance`/`confidence` extension does not loosen required fields.
+- See section 5.7 for the full Phase 9 test tier.
 
 ### 2.3 EventBus & Serialization
 - Path: `src/services/infra/__tests__/eventBus.test.ts`
@@ -188,7 +189,7 @@ The default suite covers the UI seam **without any browser download**:
 
 - `src/stores/scanStore.test.ts` - the store lifecycle plus a full crawl run through `startScan()` against an injected fake browser runtime and a real in-memory SQLite database: it asserts the crawl's *real* counters (`pagesScanned`/`pagesDiscovered`), discovered URLs, completion status, and the honest runtime-unavailable failure state (no fabricated progress). `scanService` exposes `setScanRuntimeProviderForTests` / `resetScanServiceForTests` so the seam is testable without a Tauri shell.
 
-Port isolation for the six opt-in real-Chromium files: worker smoke `9099`, extraction E2E `4000`, orchestration E2E `8000`, interactive capture E2E `3001`, responsive capture E2E `5173`, clone capture E2E `4173`. They can be run together (`RUN_BROWSER_TESTS=1 npx vitest run src/workers/crawler`) without contending for a fixture port.
+Port isolation for the seven opt-in real-Chromium files: worker smoke `9099`, extraction E2E `4000`, orchestration E2E `8000`, interactive capture E2E `3001`, responsive capture E2E `5173`, clone capture E2E `4173`, blueprint capture E2E `3000`. They can be run together (`RUN_BROWSER_TESTS=1 npx vitest run src/workers/crawler`) without contending for a fixture port.
 
 ### 5.6 Phase 8 static clone test tier
 
@@ -204,6 +205,24 @@ The default suite covers the Phase 8 clone engine **without any browser download
 - `src/services/infra/workerProtocol.test.ts` - validation of `captureAssets`, `serveClone`/`stopClone`, and the `extract` `rawHtml` field.
 
 The **opt-in** `src/workers/crawler/__tests__/cloneCapture.e2e.test.ts` (gate `RUN_BROWSER_TESTS=1`) launches real Chromium against the clone fixture (`127.0.0.1:4173`), captures the bounded raw HTML and the referenced assets, runs the pure rewriter, and asserts the result is self-contained (no `googletagmanager.com`, `js/mock-client.js` injected, local asset paths present).
+
+### 5.7 Phase 9 website blueprint test tier
+
+The default suite covers the Blueprint schema, engine, persistence, and lifecycle **without any browser download**:
+
+- `src/services/blueprint/__tests__/schema.test.ts` - `BlueprintSchema` accepts a valid document; rejects missing sections, unknown keys (`.strict()`), bad enum/URL/version values; enforces bounded recursion (component depth, cycles, unknown child refs, page/route/component counts, navigation depth); and confirms the optional additive `provenance`/`confidence` extension does not loosen required fields. `fixtures.ts` holds deterministic inline documents.
+- `src/services/blueprint/__tests__/domNormalizer.test.ts`, `designTokens.test.ts`, `routes.test.ts`, `forms.test.ts`, `technologies.test.ts` - the pure normalization units (component segmentation + bounds, token extraction, route/nav inference, form modeling, technology projection); missing/conflicting evidence is represented, never fabricated.
+- `src/services/blueprint/__tests__/evidence.test.ts` - provenance (observations/inferences/evidence_summary) construction and secret-absence.
+- `src/services/blueprint/__tests__/blueprintService.test.ts` - end-to-end assembly + validation over injected storage.
+- `src/services/blueprint/__tests__/blueprintLifecycle.test.ts` - round-trip, regeneration (`version + 1`), invalid-document persistence (`is_valid = 0`), the no-orphan rollback, and `blueprint.*` event ordering.
+- `src/services/scanner/scanServiceBlueprint.test.ts` - the `runScan({ blueprint: true })` integration, failure isolation (a Blueprint failure never changes the crawl's terminal status), and the opt-out path.
+- `src/services/storage/__tests__/blueprints.test.ts` - migration `008` registration/checksum/table+indexes + the `blueprint_evidence_path` column, `BlueprintRepository` upsert/list/latest/delete, the UNIQUE `(scan_id, version)`, scan-delete nulling, and reopen persistence.
+- `src/stores/blueprintStore.test.ts` + `src/components/blueprint/BlueprintPanel.test.tsx` - honest `idle | loading | empty | ready | partial | error` states and the panel render.
+- `src/workers/crawler/__tests__/blueprintCapture.test.ts` - the pure capture harness (`buildBlueprintProbe`/`normalizeBlueprintEvidence`): bounding/truncation and the attribute allowlist (no `value`/`style`/event handlers), with no browser needed.
+- `src/services/scanner/__tests__/blueprintEvidenceCapture.test.ts` - the host-side evidence-capture service seam.
+- `src/services/infra/workerProtocol.test.ts` - validation of the `captureBlueprint` command/result wire shape (limits, malformed frames).
+
+The **opt-in** `src/workers/crawler/__tests__/blueprintCapture.e2e.test.ts` (gate `RUN_BROWSER_TESTS=1`, fixture port `3000`) launches real Chromium against `scripts/fixtures/blueprint/index.html` and asserts the evidence is bounded and contains the expected landmarks/headings/tokens/form/nav, that a huge DOM is flagged `truncated`, and - critically - that no planted secret (localStorage token, input `value`, hidden field) leaks into the evidence.
 
 **Responsive capture (Phase 7, as built)**: `src/services/scanner/responsiveScanner.test.ts` covers profile selection, path sanitisation, and orchestration (including the honest skip-on-failure path). `src/services/storage/__tests__/responsiveCaptures.test.ts` covers the migration + repository (one-per-page/profile, cascade, reopen). `src/services/infra/workerProtocol.test.ts` validates the `captureViewport` wire shape (including the profile bounds). The opt-in `src/workers/crawler/__tests__/responsiveCapture.e2e.test.ts` renders the responsive fixture at desktop AND mobile and asserts the captures are distinct (different screenshot bytes; `nav` visible on desktop, hidden on mobile) with detected media-query breakpoints.
 

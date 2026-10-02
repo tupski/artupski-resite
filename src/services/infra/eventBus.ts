@@ -209,6 +209,56 @@ export interface AuthScanStartedPayload extends BaseEventPayload {
   authenticated: boolean;
 }
 
+/**
+ * Blueprint lifecycle payloads (Phase 9). They carry ids, counts, validity, and
+ * bounded validation messages only - never document bytes, credentials, or any
+ * other secret. Emitted `blueprint.started` -> (`blueprint.generated` |
+ * `blueprint.validation_failed`) -> `blueprint.completed`.
+ */
+export interface BlueprintStartedPayload extends BaseEventPayload {
+  domain: 'blueprint';
+  scanId: string;
+  /** Seed/target URL the Blueprint is being synthesized for (never a secret). */
+  sourceUrl?: string;
+  /** Completed pages considered for synthesis (0 before synthesis resolves). */
+  pagesConsidered?: number;
+}
+
+export interface BlueprintGeneratedPayload extends BaseEventPayload {
+  domain: 'blueprint';
+  scanId: string;
+  blueprintId: string;
+  /** Document revision (`blueprints.version`). */
+  version: number;
+  schemaVersion: number;
+  /** Always true on the `generated` event (invalid docs use validation_failed). */
+  isValid: boolean;
+  pageCount: number;
+  componentCount: number;
+}
+
+export interface BlueprintValidationFailedPayload extends BaseEventPayload {
+  domain: 'blueprint';
+  scanId: string;
+  /** Present when a document was assembled and persisted; absent otherwise. */
+  blueprintId?: string;
+  schemaVersion: number;
+  errorCount: number;
+  /** Bounded `path: message` strings; never document content. */
+  errors: string[];
+}
+
+export interface BlueprintCompletedPayload extends BaseEventPayload {
+  domain: 'blueprint';
+  scanId: string;
+  blueprintId?: string;
+  version: number;
+  isValid: boolean;
+  /** True when evidence was skipped/truncated or synthesis failed entirely. */
+  partial: boolean;
+  skippedPages: number;
+}
+
 /** Scanner (crawler) payloads (Phase 4). */
 export interface ScannerStartedPayload extends BaseEventPayload {
   domain: 'scanner';
@@ -420,6 +470,10 @@ export interface AppEventPayloadMap {
   'auth.session_cleared': AuthSessionClearedPayload;
   'auth.session_expired': AuthFailedPayload;
   'auth.scan_started': AuthScanStartedPayload;
+  'blueprint.started': BlueprintStartedPayload;
+  'blueprint.generated': BlueprintGeneratedPayload;
+  'blueprint.validation_failed': BlueprintValidationFailedPayload;
+  'blueprint.completed': BlueprintCompletedPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;

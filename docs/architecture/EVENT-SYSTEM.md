@@ -229,6 +229,19 @@ Emitted by the crawler application service (`src/services/scanner/crawlerService
 
 `scanner.failed` is reserved for a **fatal** crawl failure (browser crash, protocol violation, unexpected worker exit); a recoverable page-level error is emitted as `scanner.page_failed` and the crawl continues. Progress is emitted on a bounded cadence (`progressEveryPages`), not once per page or per node.
 
+### 3.4 Blueprint Event Keys (Phase 9)
+
+Emitted by the Blueprint lifecycle wrapper (`src/services/blueprint/blueprintLifecycle.ts`) using the shared `createEvent` envelope. Payload interfaces live in `src/services/infra/eventBus.ts`. Payloads carry ids, counts, validity, and **bounded** validation messages only - never document bytes, credentials, or cookies.
+
+| Event key | Emitted when | Payload highlights |
+| :--- | :--- | :--- |
+| `blueprint.started` | Synthesis begins for a scan. | `scanId`, `projectId`, `sourceUrl?` |
+| `blueprint.generated` | A **valid** document was persisted. | `blueprintId`, `version`, `schemaVersion`, `pageCount`, `componentCount` |
+| `blueprint.validation_failed` | A document failed validation, or synthesis/persistence failed (an invalid document is still persisted with `is_valid = 0`). | `blueprintId?`, `schemaVersion`, `errorCount`, bounded `errors[]` |
+| `blueprint.completed` | The lifecycle attempt finished (always emitted last, success or failure). | `blueprintId?`, `version`, `isValid`, `partial`, `skippedPages` |
+
+Ordering guarantee: `blueprint.started` → (`blueprint.generated` \| `blueprint.validation_failed`) → `blueprint.completed`. A Blueprint failure **never** changes a crawl's terminal status (`scanner.completed`/`scanner.failed` are unaffected).
+
 ---
 
 ## 4. Verbose Process Console Logging Architecture

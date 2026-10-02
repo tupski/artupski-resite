@@ -17,9 +17,12 @@ import type { ProcessManager } from '../infra/processManager';
 import {
   MAX_ASSET_BYTES,
   MAX_ASSET_COUNT,
+  MAX_BLUEPRINT_BYTES,
+  MAX_BLUEPRINT_NODES,
   MAX_EXTRACT_REDIRECTS,
   type AbortResultPayload,
   type CaptureAssetsResultPayload,
+  type CaptureBlueprintResultPayload,
   type ExtractResultPayload,
   type NormalizedPage,
   type RawHtmlCapture,
@@ -86,7 +89,12 @@ export class ScannerWorkerClient {
       await this.adapter.start();
       const result = await this.adapter.request({ command: 'ping' });
       if (result.command !== 'ping') {
-        return { ok: false, error: createScannerError('INVALID_URL', { message: 'Worker returned an unexpected ping result.' }) };
+        return {
+          ok: false,
+          error: createScannerError('INVALID_URL', {
+            message: 'Worker returned an unexpected ping result.'
+          })
+        };
       }
       return { ok: true, data: result };
     } catch (error) {
@@ -95,7 +103,11 @@ export class ScannerWorkerClient {
   }
 
   /** Navigate to `url` and return a normalized page extraction. */
-  async extract(sessionId: string, url: string, options: ExtractOptions = {}): Promise<ScannerResult<NormalizedPage>> {
+  async extract(
+    sessionId: string,
+    url: string,
+    options: ExtractOptions = {}
+  ): Promise<ScannerResult<NormalizedPage>> {
     try {
       const result = await this.adapter.request({
         command: 'extract',
@@ -110,7 +122,9 @@ export class ScannerWorkerClient {
       if (payload.command !== 'extract') {
         return {
           ok: false,
-          error: createScannerError('INVALID_URL', { message: 'Worker returned an unexpected extract result.' })
+          error: createScannerError('INVALID_URL', {
+            message: 'Worker returned an unexpected extract result.'
+          })
         };
       }
       return { ok: true, data: payload.page };
@@ -138,7 +152,10 @@ export class ScannerWorkerClient {
         timeoutMs: options.timeoutMs ?? 30_000,
         followRedirects: options.followRedirects ?? true,
         allowedContentTypes: options.allowedContentTypes,
-        maxRedirects: Math.min(options.maxRedirects ?? MAX_EXTRACT_REDIRECTS, MAX_EXTRACT_REDIRECTS),
+        maxRedirects: Math.min(
+          options.maxRedirects ?? MAX_EXTRACT_REDIRECTS,
+          MAX_EXTRACT_REDIRECTS
+        ),
         captureHtml: true
       });
       const payload = result as ExtractResultPayload;
@@ -188,13 +205,51 @@ export class ScannerWorkerClient {
     }
   }
 
+  /**
+   * Capture bounded, read-only Blueprint evidence (DOM tree + computed-style
+   * subset) for `url` (Phase 9). The worker navigates with the same URL policy
+   * as `extract`; both caps are optional and clamped here and by the worker.
+   */
+  async captureBlueprint(
+    sessionId: string,
+    url: string,
+    options: { timeoutMs?: number; maxNodes?: number; maxBytes?: number } = {}
+  ): Promise<ScannerResult<CaptureBlueprintResultPayload>> {
+    try {
+      const result = await this.adapter.request({
+        command: 'captureBlueprint',
+        sessionId,
+        url,
+        timeoutMs: options.timeoutMs ?? 30_000,
+        maxNodes: Math.min(options.maxNodes ?? MAX_BLUEPRINT_NODES, MAX_BLUEPRINT_NODES),
+        maxBytes: Math.min(options.maxBytes ?? MAX_BLUEPRINT_BYTES, MAX_BLUEPRINT_BYTES)
+      });
+      const payload = result as CaptureBlueprintResultPayload;
+      if (payload.command !== 'captureBlueprint') {
+        return {
+          ok: false,
+          error: createScannerError('INVALID_URL', {
+            message: 'Worker returned an unexpected blueprint capture result.'
+          })
+        };
+      }
+      return { ok: true, data: payload };
+    } catch (error) {
+      this.log.warn('Blueprint capture failed', { error: String(error) });
+      return { ok: false, error: toScannerError(error) };
+    }
+  }
+
   /** Cancel an in-flight extraction for a session. */
   async abort(sessionId: string): Promise<ScannerResult<true>> {
     try {
       const result = await this.adapter.request({ command: 'abort', sessionId });
       const payload = result as AbortResultPayload;
       if (payload.command !== 'abort') {
-        return { ok: false, error: createScannerError('USER_CANCELLED', { message: 'Unexpected abort result.' }) };
+        return {
+          ok: false,
+          error: createScannerError('USER_CANCELLED', { message: 'Unexpected abort result.' })
+        };
       }
       return { ok: true, data: true };
     } catch (error) {

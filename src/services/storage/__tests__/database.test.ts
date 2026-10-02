@@ -54,7 +54,11 @@ describe('SqliteDatabase', () => {
 
   it('persists bytes through the storage file on mutation', async () => {
     const storage = await createTestStorage();
-    await storage.projects.create({ name: 'Persistence', targetUrl: 'https://a.test', storagePath: '/p' });
+    await storage.projects.create({
+      name: 'Persistence',
+      targetUrl: 'https://a.test',
+      storagePath: '/p'
+    });
     expect(storage.file.writes).toBeGreaterThan(0);
     const persisted = await storage.file.read();
     expect(persisted).not.toBeNull();
@@ -77,8 +81,8 @@ describe('SqliteDatabase', () => {
     expect(names).toContain('auth_sessions');
     // Added by the static clone phase (migration 007).
     expect(names).toContain('scan_assets');
-    // Tables owned by later phases must NOT exist yet.
-    expect(names).not.toContain('blueprints');
+    // Added by the blueprint phase (migration 008).
+    expect(names).toContain('blueprints');
     await storage.close();
   });
 });

@@ -11,6 +11,7 @@
  * sessions are deferred to later phases and are intentionally absent.
  */
 import type { PageAuthStatus } from '../services/auth/types';
+import type { BlueprintValidationError } from './blueprint';
 
 export type ProjectStatus =
   'idle' | 'scanning' | 'blueprint_ready' | 'generating' | 'completed' | 'error';
@@ -101,6 +102,12 @@ export interface ScanPage {
    * than reconstructing markup from metadata.
    */
   rawHtmlPath: string | null;
+  /**
+   * On-disk path to the page's captured bounded DOM/computed-style blueprint
+   * evidence (migration 008), or null when no evidence was captured. Kept so
+   * evidence survives between runs without re-crawling.
+   */
+  blueprintEvidencePath: string | null;
 }
 
 /** One matched signal persisted with a detection (Phase 5). */
@@ -146,14 +153,7 @@ export interface AppSetting {
 
 /** Asset kinds persisted in `scan_assets` (migration 007). */
 export type CloneAssetType =
-  | 'image'
-  | 'stylesheet'
-  | 'script'
-  | 'font'
-  | 'video'
-  | 'audio'
-  | 'document'
-  | 'other';
+  'image' | 'stylesheet' | 'script' | 'font' | 'video' | 'audio' | 'document' | 'other';
 
 /**
  * A downloaded clone asset (migration 007). Mirrors the `scan_assets` table:
@@ -236,6 +236,31 @@ export interface AuthSession {
   isActive: boolean;
   expiresAt: string | null;
   createdAt: string;
+}
+
+/**
+ * A persisted Blueprint document record (migration 008). Only the sandboxed
+ * on-disk path + validation metadata live here - the (large) document itself is
+ * stored as JSON in the sandboxed blueprint tree. `version` is the document
+ * revision; `schemaVersion` is the BLUEPRINT-SPEC revision (currently 1).
+ *
+ * NOTE: this is the persisted row shape, distinct from the in-document
+ * `Blueprint` document type in `src/types/blueprint.ts`.
+ */
+export interface Blueprint {
+  id: string;
+  projectId: string;
+  /** Null when the scan was deleted (`ON DELETE SET NULL`); the row survives. */
+  scanId: string | null;
+  version: number;
+  schemaVersion: number;
+  /** Sandboxed relative path to the Blueprint JSON document. */
+  filePath: string;
+  isValid: boolean;
+  /** Bounded, actionable validation errors (empty when `isValid`). */
+  validationErrors: BlueprintValidationError[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export const PROJECT_STATUSES: readonly ProjectStatus[] = [

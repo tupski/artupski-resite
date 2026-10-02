@@ -18,6 +18,12 @@ export {
   MAX_RAW_HTML_BYTES,
   MAX_ASSET_COUNT,
   MAX_ASSET_BYTES,
+  MAX_BLUEPRINT_NODES,
+  MAX_BLUEPRINT_BYTES,
+  MAX_BLUEPRINT_TEXT_CHARS,
+  MAX_BLUEPRINT_FORMS,
+  MAX_BLUEPRINT_CSS_VARS,
+  MAX_BLUEPRINT_FRAME_BYTES,
   RESPONSIVE_VIEWPORT_PROFILES,
   isViewportProfile,
   serializeMessage,
@@ -60,11 +66,23 @@ export type {
   CaptureViewportResultPayload,
   CaptureAssetsCommandPayload,
   CaptureAssetsResultPayload,
+  CaptureBlueprintCommandPayload,
+  CaptureBlueprintResultPayload,
   CapturedAsset,
   RawHtmlCapture,
   ViewportProfile,
   ViewportProfileName,
-  ViewportElementNode
+  ViewportElementNode,
+  BlueprintEvidence,
+  BlueprintEvidenceNode,
+  BlueprintEvidenceStyles,
+  BlueprintEvidenceLink,
+  BlueprintEvidenceHeading,
+  BlueprintEvidenceImage,
+  BlueprintEvidenceNav,
+  BlueprintEvidenceForm,
+  BlueprintEvidenceFormField,
+  BlueprintEvidenceFontFace
 } from '../../services/infra/workerProtocol.ts';
 
 // Shared pure modules the worker enforces/uses directly. Re-exported here so the

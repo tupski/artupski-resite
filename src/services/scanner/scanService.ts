@@ -34,6 +34,12 @@ import { ScannerWorkerClient } from './scannerWorkerClient';
 import { createCrawlerService, createStorageCrawlPersistence } from './crawlerFactory';
 import type { CrawlResult, CrawlerService } from './crawlerService';
 import { runResponsiveScan } from './responsiveScanner';
+import { runBlueprintEvidenceCapture } from './blueprintEvidenceCapture';
+import {
+  runBlueprintLifecycle,
+  type BlueprintLifecycleDeps,
+  type BlueprintLifecycleOutcome
+} from '../blueprint/blueprintLifecycle';
 import { createScannerError } from './errors';
 import { createProcessError } from '../infra/processErrors';
 import { createStorageError } from '../storage/errors';
@@ -63,6 +69,13 @@ export interface ScanRunRequest {
    * omitted list skips responsive capture entirely (the unchanged behaviour).
    */
   viewportProfiles?: ViewportProfileName[];
+  /**
+   * When true, capture bounded, read-only Blueprint evidence (DOM + computed
+   * styles) for each completed page after the crawl and persist it (Phase 9).
+   * Opt-in so existing callers are unaffected; a capture failure never changes
+   * the crawl's terminal status.
+   */
+  blueprint?: boolean;
 }
 
 export interface ScanRunOutcome {
@@ -79,6 +92,12 @@ export interface ScanRunOutcome {
   pagesBlocked: number;
   /** True when a captured session was injected for this run. */
   authenticated: boolean;
+  /**
+   * Honest Blueprint lifecycle summary when `blueprint: true` was requested for
+   * a completed crawl. Absent otherwise. A Blueprint failure is recorded here
+   * and never affects `status`.
+   */
+  blueprint?: BlueprintLifecycleOutcome;
   error: StructuredError | null;
 }
 
@@ -91,6 +110,13 @@ interface ActiveScan {
 }
 
 let active: ActiveScan | null = null;
+
+/**
+ * Blueprint lifecycle seams. Production passes `{}` so `runBlueprintLifecycle`
+ * uses the live storage/sandbox/event-bus wiring; tests inject a fake synthesis
+ * + persistence + file I/O without a Tauri shell.
+ */
+let blueprintLifecycleDeps: BlueprintLifecycleDeps = {};
 
 function notReady(operation: string): StructuredError {
   return createStorageError('STORAGE_NOT_READY', {
@@ -199,6 +225,8 @@ export async function runScan(request: ScanRunRequest): Promise<ScanServiceResul
     })
   );
 
+  let blueprintOutcome: BlueprintLifecycleOutcome | undefined;
+
   try {
     const result = await service.run({
       projectId: request.projectId,
@@ -239,7 +267,55 @@ export async function runScan(request: ScanRunRequest): Promise<ScanServiceResul
       });
     }
 
-    return { ok: true, data: toOutcome(result, authenticated) };
+    // Blueprint evidence capture (Phase 9): only for a completed crawl, and only
+    // when the caller opted in. Bounded, read-only DOM/computed-style evidence is
+    // captured per completed page and its path persisted on the page row. A
+    // capture failure is reported in the log but never changes the crawl's
+    // terminal status (the same rule as responsive capture).
+    if (result.status === 'completed' && request.blueprint === true) {
+      const pages = await storageService.getRepositories().pages.listByScan(result.scanId);
+      const capturable = pages
+        .filter((page) => page.status === 'completed')
+        .map((page) => ({ id: page.id, url: page.finalUrl || page.url }));
+      const evidence = await runBlueprintEvidenceCapture(
+        {
+          scanId: result.scanId,
+          projectId: request.projectId,
+          sessionId,
+          pages: capturable
+        },
+        { worker: client }
+      );
+      logger.child('scan').info('Blueprint evidence summary', {
+        scanId: result.scanId,
+        captured: evidence.captured,
+        skipped: evidence.skipped
+      });
+
+      // Blueprint synthesis + persistence (Phase 9): runs after evidence capture,
+      // after the crawl has already reached its terminal `completed` status. It
+      // emits `blueprint.*` events and persists the document/row. `runBlueprint`
+      // never throws and `runBlueprintLifecycle` isolates every failure, so this
+      // step can NEVER change the crawl's terminal status (the same rule as the
+      // responsive/evidence steps). A synthesis failure is recorded honestly in
+      // the returned outcome rather than propagated.
+      blueprintOutcome = await runBlueprintLifecycle(
+        {
+          scanId: result.scanId,
+          projectId: request.projectId,
+          sourceUrl: request.seedUrl
+        },
+        blueprintLifecycleDeps
+      );
+      logger.child('scan').info('Blueprint synthesis summary', {
+        scanId: result.scanId,
+        persisted: blueprintOutcome.blueprintId,
+        valid: blueprintOutcome.isValid,
+        partial: blueprintOutcome.partial
+      });
+    }
+
+    return { ok: true, data: toOutcome(result, authenticated, blueprintOutcome) };
   } catch (error) {
     // The service already maps expected failures into `CrawlResult`; this guard
     // keeps an unexpected throw from reaching the UI as a raw stack trace.
@@ -273,6 +349,16 @@ export function isScanRunning(): boolean {
 export function resetScanServiceForTests(): void {
   active = null;
   runtimeProvider = getBrowserRuntime;
+  blueprintLifecycleDeps = {};
+}
+
+/**
+ * Test-only: swap the Blueprint lifecycle seams (synthesis/persistence/file I/O/
+ * events) so the integration can be exercised without a Tauri shell. Pass `null`
+ * to restore the live wiring.
+ */
+export function setBlueprintLifecycleDepsForTests(deps: BlueprintLifecycleDeps | null): void {
+  blueprintLifecycleDeps = deps ?? {};
 }
 
 /** Test-only: swap the browser-runtime provider (pass `null` to restore). */
@@ -280,7 +366,11 @@ export function setScanRuntimeProviderForTests(provider: RuntimeProvider | null)
   runtimeProvider = provider ?? getBrowserRuntime;
 }
 
-function toOutcome(result: CrawlResult, authenticated: boolean): ScanRunOutcome {
+function toOutcome(
+  result: CrawlResult,
+  authenticated: boolean,
+  blueprint?: BlueprintLifecycleOutcome
+): ScanRunOutcome {
   return {
     scanId: result.scanId,
     status: result.status,
@@ -291,6 +381,7 @@ function toOutcome(result: CrawlResult, authenticated: boolean): ScanRunOutcome 
     pagesAuthRequired: result.pagesAuthRequired,
     pagesBlocked: result.pagesBlocked,
     authenticated,
+    ...(blueprint ? { blueprint } : {}),
     error: result.error
   };
 }

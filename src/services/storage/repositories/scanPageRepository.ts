@@ -18,7 +18,7 @@ const COLUMNS =
   'id, scan_id, url, final_url, path, depth, http_status, title, meta_description, canonical_url, ' +
   'robots_meta, status, auth_status, error_code, error_message, load_time_ms, dom_content_loaded_time_ms, ' +
   'dom_node_count, headings, internal_links, external_links, images, warnings, captured_at, created_at, ' +
-  'raw_html_path';
+  'raw_html_path, blueprint_evidence_path';
 
 const VALID_STATUSES: ReadonlySet<ScanPageStatus> = new Set([
   'completed',
@@ -61,15 +61,17 @@ function toParams(input: UpsertScanPageInput): (string | number | null)[] {
     JSON.stringify(input.images),
     JSON.stringify(input.warnings),
     input.capturedAt,
-    input.rawHtmlPath ?? null
+    input.rawHtmlPath ?? null,
+    input.blueprintEvidencePath ?? null
   ];
 }
 
 const UPSERT_SQL = `INSERT INTO scan_pages (
   id, scan_id, url, final_url, path, depth, http_status, title, meta_description, canonical_url,
   robots_meta, status, auth_status, error_code, error_message, load_time_ms, dom_content_loaded_time_ms,
-  dom_node_count, headings, internal_links, external_links, images, warnings, captured_at, raw_html_path
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  dom_node_count, headings, internal_links, external_links, images, warnings, captured_at, raw_html_path,
+  blueprint_evidence_path
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(scan_id, url) DO UPDATE SET
   final_url = excluded.final_url,
   path = excluded.path,
@@ -92,7 +94,8 @@ ON CONFLICT(scan_id, url) DO UPDATE SET
   images = excluded.images,
   warnings = excluded.warnings,
   captured_at = excluded.captured_at,
-  raw_html_path = COALESCE(excluded.raw_html_path, scan_pages.raw_html_path);`;
+  raw_html_path = COALESCE(excluded.raw_html_path, scan_pages.raw_html_path),
+  blueprint_evidence_path = COALESCE(excluded.blueprint_evidence_path, scan_pages.blueprint_evidence_path);`;
 
 export class ScanPageRepository {
   private readonly context: StorageContext;
@@ -163,6 +166,22 @@ export class ScanPageRepository {
         [scanId]
       );
     return row?.total ?? 0;
+  }
+
+  /**
+   * Record the on-disk path to a page's captured blueprint evidence (migration
+   * 008). Passing null clears it. Returns the number of affected rows.
+   */
+  async updateBlueprintEvidencePath(pageId: string, path: string | null): Promise<number> {
+    const db = this.context.getDatabase();
+    const result = db.run('UPDATE scan_pages SET blueprint_evidence_path = ? WHERE id = ?;', [
+      path,
+      pageId
+    ]);
+    if (result.changes > 0) {
+      await this.context.persist();
+    }
+    return result.changes;
   }
 
   async deleteByScan(scanId: string): Promise<number> {

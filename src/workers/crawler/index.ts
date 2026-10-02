@@ -38,6 +38,7 @@ import {
   type AuthStorageState,
   type BrowserAvailability,
   type CaptureAssetsResultPayload,
+  type CaptureBlueprintResultPayload,
   type CaptureStateResultPayload,
   type CaptureViewportResultPayload,
   type CapturedAsset,
@@ -58,8 +59,19 @@ import {
   MAX_SCREENSHOT_BASE64_BYTES,
   MAX_RAW_HTML_BYTES,
   MAX_ASSET_COUNT,
-  MAX_ASSET_BYTES
+  MAX_ASSET_BYTES,
+  MAX_BLUEPRINT_NODES,
+  MAX_BLUEPRINT_BYTES,
+  MAX_BLUEPRINT_TEXT_CHARS,
+  MAX_BLUEPRINT_FORMS,
+  MAX_BLUEPRINT_CSS_VARS,
+  MAX_BLUEPRINT_FRAME_BYTES
 } from './protocol.ts';
+import {
+  buildBlueprintProbe,
+  normalizeBlueprintEvidence,
+  type BlueprintCaptureLimits
+} from './blueprintCapture.ts';
 import { LOGIN_PROBE_EXPRESSION } from '../../services/scanner/extraction/inPageExtractor.ts';
 import { classifyIpLiteral } from '../../services/scanner/security/ipPolicy.ts';
 
@@ -820,10 +832,7 @@ interface AssetUrlRef {
 }
 
 /** Classify a captured asset into the `scan_assets.asset_type` check domain. */
-function classifyAssetType(
-  hint: string,
-  mimeType: string
-): CapturedAsset['assetType'] {
+function classifyAssetType(hint: string, mimeType: string): CapturedAsset['assetType'] {
   const mime = mimeType.toLowerCase();
   if (mime.includes('css') || hint === 'stylesheet') return 'stylesheet';
   if (mime.includes('javascript') || hint === 'script') return 'script';
@@ -940,6 +949,115 @@ async function handleCaptureAssets(message: WorkerCommandMessage): Promise<Worke
       assets,
       skipped,
       truncated
+    };
+    return payload;
+  } finally {
+    session.activeAbort = null;
+    await page.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Capture bounded, read-only Blueprint evidence (Phase 9, decision C12): the
+ * semantic DOM tree plus the computed-style subset the Blueprint normalizer
+ * needs. The SAME URL policy as `extract`/`captureAssets` is applied to the
+ * navigation and its final URL. The probe reads structure + computed styles
+ * ONLY - never cookie values, storage values, input field values, or headers.
+ * Over-cap content is truncated and flagged; the result always fits one frame.
+ */
+async function handleCaptureBlueprint(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
+  if (message.payload.command !== 'captureBlueprint') {
+    throw new Error('captureBlueprint handler received the wrong command');
+  }
+  const session = sessions.get(message.payload.sessionId);
+  if (!session) {
+    throw Object.assign(new Error(`Unknown session "${message.payload.sessionId}".`), {
+      code: 'PLAYWRIGHT_CRASHED'
+    });
+  }
+
+  const requestedUrl = message.payload.url;
+  const limits: BlueprintCaptureLimits = {
+    maxNodes: Math.min(message.payload.maxNodes ?? MAX_BLUEPRINT_NODES, MAX_BLUEPRINT_NODES),
+    // The frame cap is the true ceiling: evidence must fit one protocol frame.
+    maxBytes: Math.min(
+      message.payload.maxBytes ?? MAX_BLUEPRINT_BYTES,
+      MAX_BLUEPRINT_BYTES,
+      MAX_BLUEPRINT_FRAME_BYTES
+    ),
+    maxTextChars: MAX_BLUEPRINT_TEXT_CHARS,
+    maxForms: MAX_BLUEPRINT_FORMS,
+    maxCssVars: MAX_BLUEPRINT_CSS_VARS
+  };
+  const trustedOrigins = [new URL(requestedUrl).origin];
+  const decision = await evaluateUrlPolicy(requestedUrl, { resolveHost, trustedOrigins });
+  if (!decision.allowed) {
+    throw Object.assign(new Error(`Navigation blocked by the URL policy (${decision.reason}).`), {
+      code: 'INVALID_URL',
+      detail: decision.detail
+    });
+  }
+
+  const abort = new AbortController();
+  session.activeAbort = abort;
+  const page = await session.context.newPage();
+  const trustedHosts = new Set<string>([new URL(requestedUrl).hostname.toLowerCase()]);
+
+  try {
+    await installRouteGuard(page, trustedHosts);
+    let response: PlaywrightResponse | null;
+    try {
+      response = await page.goto(requestedUrl, {
+        timeout: clampTimeout(message.payload.timeoutMs),
+        waitUntil: 'load'
+      });
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : 'Navigation failed.';
+      if (abort.signal.aborted) {
+        throw Object.assign(new Error('Blueprint capture was cancelled.'), {
+          code: 'USER_CANCELLED'
+        });
+      }
+      if (/timeout/i.test(messageText)) {
+        throw Object.assign(new Error('Blueprint capture timed out.'), {
+          code: 'CONNECTION_TIMED_OUT'
+        });
+      }
+      throw Object.assign(new Error(messageText), { code: 'NAVIGATION_ABORTED' });
+    }
+    const status = response ? response.status() : null;
+    const finalUrl = page.url();
+
+    // Post-navigation policy check: redirects are followed by the browser, so
+    // re-validate the final URL exactly as `extract` does.
+    const finalDecision = await evaluateUrlPolicy(finalUrl, { resolveHost, trustedOrigins });
+    if (!finalDecision.allowed) {
+      throw Object.assign(new Error('Navigation redirected to a prohibited destination.'), {
+        code: 'NAVIGATION_ABORTED',
+        detail: finalDecision.reason
+      });
+    }
+
+    let raw: unknown = null;
+    try {
+      raw = await page.evaluate<unknown>(buildBlueprintProbe(limits));
+    } catch {
+      raw = null;
+    }
+    const evidence = normalizeBlueprintEvidence(raw, {
+      url: finalUrl,
+      status,
+      capturedAt: new Date().toISOString(),
+      limits
+    });
+
+    const payload: CaptureBlueprintResultPayload = {
+      command: 'captureBlueprint',
+      sessionId: message.payload.sessionId,
+      url: requestedUrl,
+      finalUrl,
+      status,
+      evidence
     };
     return payload;
   } finally {
@@ -1335,6 +1453,9 @@ async function dispatch(message: WorkerCommandMessage): Promise<void> {
         break;
       case 'captureAssets':
         payload = await handleCaptureAssets(message);
+        break;
+      case 'captureBlueprint':
+        payload = await handleCaptureBlueprint(message);
         break;
       default:
         throw Object.assign(new Error('Unsupported command.'), {

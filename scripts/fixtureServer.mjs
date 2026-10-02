@@ -50,7 +50,11 @@ const FILE_ROUTES = new Map([
   ['/clone/about', join(FIXTURES_DIR, 'clone', 'about.html')],
   ['/clone/assets/style.css', join(FIXTURES_DIR, 'clone', 'assets', 'style.css')],
   ['/clone/assets/logo.svg', join(FIXTURES_DIR, 'clone', 'assets', 'logo.svg')],
-  ['/clone/assets/app.js', join(FIXTURES_DIR, 'clone', 'assets', 'app.js')]
+  ['/clone/assets/app.js', join(FIXTURES_DIR, 'clone', 'assets', 'app.js')],
+  // Blueprint fixture (Phase 9): landmarks, card grid, nav, form, tokens.
+  ['/blueprint', join(FIXTURES_DIR, 'blueprint', 'index.html')],
+  ['/blueprint/', join(FIXTURES_DIR, 'blueprint', 'index.html')],
+  ['/blueprint/assets/logo.svg', join(FIXTURES_DIR, 'blueprint', 'assets', 'logo.svg')]
 ]);
 
 /**

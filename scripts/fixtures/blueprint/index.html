@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blueprint Fixture Home</title>
+    <meta name="description" content="A controlled fixture for Phase 9 blueprint evidence capture." />
+    <meta name="theme-color" content="#0ea5e9" />
+    <link rel="canonical" href="/blueprint/" />
+    <link rel="icon" href="/blueprint/assets/logo.svg" />
+    <style>
+      :root {
+        --primary: #0ea5e9;
+        --primary-foreground: #ffffff;
+        --background: #ffffff;
+        --foreground: #0f172a;
+        --muted: #f1f5f9;
+        --border: #e2e8f0;
+        --radius-md: 0.375rem;
+        --spacing-4: 1rem;
+      }
+      body {
+        margin: 0;
+        font-family: Inter, -apple-system, sans-serif;
+        color: var(--foreground);
+        background: var(--background);
+        line-height: 1.5;
+      }
+      .site-header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 16px 24px;
+        border-bottom: 1px solid var(--border);
+        background: var(--muted);
+      }
+      .site-nav a {
+        margin-right: 12px;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .hero {
+        padding: 32px 24px;
+        background: var(--muted);
+      }
+      .hero h1 {
+        font-size: 2.25rem;
+        line-height: 1.25;
+        margin: 0 0 8px;
+      }
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        padding: 24px;
+      }
+      .card {
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        background: #ffffff;
+      }
+      .card h3 {
+        margin: 0 0 8px;
+        font-size: 1.25rem;
+      }
+      .btn-primary {
+        display: inline-block;
+        padding: 8px 16px;
+        border-radius: var(--radius-md);
+        background: var(--primary);
+        color: var(--primary-foreground);
+        font-weight: 600;
+        border: none;
+      }
+      .btn-secondary {
+        display: inline-block;
+        padding: 8px 16px;
+        border-radius: var(--radius-md);
+        background: var(--muted);
+        color: var(--foreground);
+        border: 1px solid var(--border);
+      }
+      .contact {
+        padding: 24px;
+        max-width: 480px;
+      }
+      .contact label {
+        display: block;
+        margin-top: 12px;
+        font-weight: 500;
+      }
+      .contact input,
+      .contact select,
+      .contact textarea {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+      }
+      .site-footer {
+        padding: 24px;
+        border-top: 1px solid var(--border);
+        color: #64748b;
+        background: var(--muted);
+      }
+      @media (max-width: 768px) {
+        .card-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <a href="/blueprint/" class="brand">
+        <img src="/blueprint/assets/logo.svg" alt="Blueprint fixture logo" width="24" height="24" />
+        Blueprint Fixture
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="/blueprint/">Home</a>
+        <a href="/blueprint/features">Features</a>
+        <a href="/blueprint/pricing">Pricing</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <h1>Build applications at lightning speed</h1>
+        <p>Turn any existing web application into clean modern code.</p>
+        <a class="btn-primary" href="/blueprint/signup">Start free trial</a>
+        <a class="btn-secondary" href="/blueprint/contact">Contact sales</a>
+      </section>
+
+      <section class="card-grid">
+        <article class="card">
+          <h3>Real-time Sync</h3>
+          <p>Collaborate with your team instantly.</p>
+        </article>
+        <article class="card">
+          <h3>Enterprise Security</h3>
+          <p>SSO, audit logs, and role-based access.</p>
+        </article>
+        <article class="card">
+          <h3>Global CDN</h3>
+          <p>Fast anywhere in the world.</p>
+        </article>
+      </section>
+
+      <section class="contact">
+        <h2>Contact Sales</h2>
+        <form id="contact-form" name="contact" method="post" action="/api/v1/contact">
+          <label for="full_name">Full Name</label>
+          <input id="full_name" name="full_name" type="text" required minlength="2" maxlength="100" placeholder="Jane Doe" />
+
+          <label for="email">Work Email</label>
+          <input id="email" name="email" type="email" required placeholder="jane@company.com" />
+
+          <label for="company_size">Company Size</label>
+          <select id="company_size" name="company_size" required>
+            <option value="1-10">1-10 employees</option>
+            <option value="11-50">11-50 employees</option>
+            <option value="50+">50+ employees</option>
+          </select>
+
+          <label for="message">Message</label>
+          <textarea id="message" name="message" rows="4" placeholder="How can we help?"></textarea>
+
+          <button type="submit" class="btn-primary">Submit Request</button>
+        </form>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <nav aria-label="Footer">
+        <a href="/blueprint/legal/privacy">Privacy Policy</a>
+        <a href="/blueprint/legal/terms">Terms of Service</a>
+      </nav>
+      <p>&copy; 2026 Blueprint Fixture</p>
+    </footer>
+
+    <script>
+      // Deliberately plant secret-like values that the evidence capture MUST NOT
+      // leak: a token in localStorage/sessionStorage and a value attribute on an
+      // input. The capture reads structure/styles only, so none may appear in
+      // the evidence document.
+      try {
+        window.localStorage.setItem('auth_token', 'LOCAL_SECRET_TOKEN_XYZ');
+        window.sessionStorage.setItem('session_secret', 'SESSION_SECRET_TOKEN_XYZ');
+      } catch (e) {}
+      var planted = document.createElement('input');
+      planted.type = 'hidden';
+      planted.name = 'csrf';
+      planted.value = 'INPUT_SECRET_VALUE_XYZ';
+      document.getElementById('contact-form').appendChild(planted);
+    </script>
+  </body>
+</html>

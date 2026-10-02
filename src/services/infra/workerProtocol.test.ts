@@ -293,6 +293,166 @@ describe('workerProtocol framing', () => {
   });
 });
 
+describe('workerProtocol blueprint extensions (Phase 9)', () => {
+  it('accepts a well-formed captureBlueprint command', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'bp',
+        type: 'command',
+        payload: {
+          command: 'captureBlueprint',
+          sessionId: 's1',
+          url: 'http://127.0.0.1:5173/blueprint',
+          timeoutMs: 20_000
+        }
+      })
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts a captureBlueprint command with caps', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'bp',
+        type: 'command',
+        payload: {
+          command: 'captureBlueprint',
+          sessionId: 's1',
+          url: 'http://127.0.0.1:5173/blueprint',
+          timeoutMs: 20_000,
+          maxNodes: 100,
+          maxBytes: 1024
+        }
+      })
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a captureBlueprint command with a bad cap', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'bp',
+        type: 'command',
+        payload: {
+          command: 'captureBlueprint',
+          sessionId: 's1',
+          url: 'http://127.0.0.1:5173/blueprint',
+          timeoutMs: 20_000,
+          maxNodes: 'many'
+        }
+      })
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects a captureBlueprint command missing its url', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'bp',
+        type: 'command',
+        payload: { command: 'captureBlueprint', sessionId: 's1', timeoutMs: 20_000 }
+      })
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('validates a captureBlueprint result carrying evidence', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'bp',
+        type: 'result',
+        payload: {
+          command: 'captureBlueprint',
+          sessionId: 's1',
+          url: 'http://127.0.0.1:5173/blueprint',
+          finalUrl: 'http://127.0.0.1:5173/blueprint',
+          status: 200,
+          evidence: {
+            url: 'http://127.0.0.1:5173/blueprint',
+            status: 200,
+            capturedAt: '2026-01-01T00:00:00.000Z',
+            nodes: [
+              {
+                id: 'n0',
+                parentId: null,
+                tag: 'html',
+                role: '',
+                semantic: [],
+                text: '',
+                attrs: {},
+                classes: [],
+                childIds: [],
+                visible: true,
+                bounds: { x: 0, y: 0, width: 800, height: 600 },
+                styles: {
+                  display: 'block',
+                  position: 'static',
+                  flexDirection: 'row',
+                  gridTemplateColumns: 'none',
+                  fontSize: '16px',
+                  fontWeight: '400',
+                  lineHeight: '24px',
+                  color: 'rgb(0, 0, 0)',
+                  backgroundColor: 'rgba(0, 0, 0, 0)',
+                  borderColor: 'rgb(0, 0, 0)',
+                  borderRadius: '0px',
+                  boxShadow: 'none',
+                  margin: '0px 0px 0px 0px',
+                  padding: '0px 0px 0px 0px',
+                  gap: 'normal',
+                  fontFamily: 'Inter, sans-serif'
+                }
+              }
+            ],
+            cssVariables: { '--primary': '#0ea5e9' },
+            fontFaces: [{ family: 'Inter', weight: '400', style: 'normal' }],
+            forms: [],
+            nav: [],
+            headings: [],
+            links: [],
+            images: [],
+            truncated: false,
+            nodeCount: 1,
+            byteLength: 100,
+            limits: {
+              maxNodes: 5000,
+              maxBytes: 4194304,
+              maxTextChars: 200,
+              maxForms: 50,
+              maxCssVars: 500
+            }
+          }
+        }
+      })
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a captureBlueprint result with malformed evidence', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'bp',
+        type: 'result',
+        payload: {
+          command: 'captureBlueprint',
+          sessionId: 's1',
+          url: 'http://x/',
+          finalUrl: 'http://x/',
+          status: 200,
+          evidence: { url: 'http://x/', nodes: 'not-an-array' }
+        }
+      })
+    );
+    expect(result.ok).toBe(false);
+  });
+});
+
 describe('workerProtocol clone extensions (Phase 8)', () => {
   it('accepts a well-formed captureAssets command', () => {
     const result = parseMessage(

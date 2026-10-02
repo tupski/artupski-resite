@@ -1166,3 +1166,12 @@ export class BlueprintMigrationRunner {
 2. **Deterministic defaults**: When new mandatory keys are added in `v2`, assign safe defaults based on inferred legacy values.
 3. **Lossless conversion**: Preserve unhandled legacy fields under internal metadata namespace `_v1_legacy_props` to prevent data loss.
 4. **Validation re-run**: After executing migration chain, pass migrated document through target version's Zod validator. If validation fails, abort without overwriting disk state.
+
+---
+
+## 6. As-built clarifications (Phase 9)
+
+The Phase 9 implementation (`src/types/blueprint.ts`) mirrors §3/§4 exactly, with two additive clarifications recorded here (resolved as open decisions **C8**/**C9** in `docs/impl-plan/phase-9-impl-plan.md` §15). Neither weakens a required field, and the JSON shape is unchanged, so every document valid under §3/§4 remains valid.
+
+- **C9 - navigation items**: §4 types `navigation.primary_menu`/`footer_menu`/`user_menu` as `z.array(z.any())`, which is a validator omission; §2.6 and §3 type them as `BlueprintNavItem[]`. The implementation validates them with a concrete `BlueprintNavItemSchema` (with a bounded nesting depth). This is strictly stronger than `z.any()` and cannot reject a valid §2.6/§3 document.
+- **C8 - provenance**: an **optional, additive** `provenance` namespace (observations / inferences / evidence summary) and optional per-node `confidence` distinguish observed evidence from inferred semantic classification. They are absent from the required schema; documents without them still validate, and no required field is loosened.

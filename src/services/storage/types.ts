@@ -14,6 +14,7 @@
 import type {
   AppSetting,
   AuthSession,
+  Blueprint,
   CloneAsset,
   CloneAssetType,
   Project,
@@ -27,6 +28,7 @@ import type {
   ScanTechnology,
   ScanTechnologyEvidence
 } from '../../types/models';
+import type { BlueprintValidationError } from '../../types/blueprint';
 
 export type SqlPrimitive = string | number | Uint8Array | null;
 export type SqlParams = SqlPrimitive[];
@@ -105,6 +107,22 @@ export interface ScanPageRow {
   created_at: string;
   /** Migration 007; null on legacy rows. */
   raw_html_path: string | null;
+  /** Migration 008; null on legacy rows. */
+  blueprint_evidence_path: string | null;
+}
+
+/** Raw `blueprints` row shape as returned by sql.js (migration 008). */
+export interface BlueprintRow {
+  id: string;
+  project_id: string;
+  scan_id: string | null;
+  version: number;
+  schema_version: number;
+  file_path: string;
+  is_valid: number;
+  validation_errors: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 /** Raw `scan_assets` row shape as returned by sql.js (migration 007). */
@@ -243,7 +261,47 @@ export function toScanPage(row: ScanPageRow): ScanPage {
     warnings: parseJsonArray<string>(row.warnings),
     capturedAt: row.captured_at,
     createdAt: row.created_at,
-    rawHtmlPath: row.raw_html_path ?? null
+    rawHtmlPath: row.raw_html_path ?? null,
+    blueprintEvidencePath: row.blueprint_evidence_path ?? null
+  };
+}
+
+/** Parse a JSON text column into a bounded `BlueprintValidationError[]`. */
+function parseValidationErrors(value: string | null): BlueprintValidationError[] {
+  if (value === null || value.length === 0) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter(
+      (entry): entry is BlueprintValidationError =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        typeof (entry as { code?: unknown }).code === 'string' &&
+        typeof (entry as { path?: unknown }).path === 'string' &&
+        typeof (entry as { message?: unknown }).message === 'string'
+    );
+  } catch {
+    // A corrupt JSON column must never break a read; surface an empty list.
+    return [];
+  }
+}
+
+export function toBlueprint(row: BlueprintRow): Blueprint {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    scanId: row.scan_id,
+    version: row.version,
+    schemaVersion: row.schema_version,
+    filePath: row.file_path,
+    isValid: row.is_valid === 1,
+    validationErrors: parseValidationErrors(row.validation_errors),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 }
 
@@ -393,6 +451,25 @@ export interface UpsertScanPageInput {
    * was captured. Optional so existing callers compile unchanged.
    */
   rawHtmlPath?: string | null;
+  /**
+   * On-disk path to the captured blueprint evidence (migration 008), or null
+   * when no evidence was captured. Optional so existing callers compile
+   * unchanged; the upsert preserves a previously stored path when omitted.
+   */
+  blueprintEvidencePath?: string | null;
+}
+
+/** A Blueprint document record ready to persist (`blueprints`, migration 008). */
+export interface UpsertBlueprintInput {
+  /** Optional caller-supplied id; the repository falls back to a UUID. */
+  id?: string;
+  projectId: string;
+  scanId: string | null;
+  version: number;
+  schemaVersion: number;
+  filePath: string;
+  isValid: boolean;
+  validationErrors: BlueprintValidationError[];
 }
 
 export interface CreateScanTechnologyInput {

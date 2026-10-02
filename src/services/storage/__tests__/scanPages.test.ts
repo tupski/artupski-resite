@@ -54,7 +54,9 @@ describe('migration 002 (scan_pages)', () => {
     expect(tables).toHaveLength(1);
 
     const indexes = storage.db
-      .all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'scan_pages';")
+      .all<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'scan_pages';"
+      )
       .map((row) => row.name);
     expect(indexes).toContain('idx_scan_pages_scan_url');
     expect(indexes).toContain('idx_scan_pages_scan_id');
@@ -70,7 +72,11 @@ describe('ScanPageRepository', () => {
 
   beforeEach(async () => {
     storage = await createTestStorage();
-    const project = await storage.projects.create({ name: 'P', targetUrl: 'https://example.com', storagePath: '/p' });
+    const project = await storage.projects.create({
+      name: 'P',
+      targetUrl: 'https://example.com',
+      storagePath: '/p'
+    });
     projectId = project.id;
     const scan = await storage.scans.create({ projectId });
     scanId = scan.id;
@@ -117,7 +123,9 @@ describe('ScanPageRepository', () => {
   });
 
   it('rejects an invalid page status', async () => {
-    await expect(storage.pages.upsert(input(scanId, { status: 'exploding' as never }))).rejects.toThrow();
+    await expect(
+      storage.pages.upsert(input(scanId, { status: 'exploding' as never }))
+    ).rejects.toThrow();
   });
 
   it('enforces the foreign key to scans', async () => {
@@ -143,7 +151,11 @@ describe('ScanPageRepository', () => {
   it('persists page records across a database reopen', async () => {
     await storage.pages.upsertMany([
       input(scanId, { url: 'https://example.com/a' }),
-      input(scanId, { url: 'https://example.com/b', status: 'failed', errorCode: 'CONNECTION_TIMED_OUT' })
+      input(scanId, {
+        url: 'https://example.com/b',
+        status: 'failed',
+        errorCode: 'CONNECTION_TIMED_OUT'
+      })
     ]);
 
     const reopened = await storage.reopen();
@@ -158,6 +170,44 @@ describe('ScanPageRepository', () => {
 
     await storage.close();
     await reopened.close();
+  });
+
+  it('round-trips the blueprint evidence path through the repository', async () => {
+    await storage.pages.upsert(input(scanId));
+    const page = (await storage.pages.listByScan(scanId))[0]!;
+    expect(page.blueprintEvidencePath).toBeNull();
+
+    const changed = await storage.pages.updateBlueprintEvidencePath(
+      page.id,
+      'v1/evidence-page.json'
+    );
+    expect(changed).toBe(1);
+    expect((await storage.pages.getById(page.id))?.blueprintEvidencePath).toBe(
+      'v1/evidence-page.json'
+    );
+
+    // It survives a database reopen (the column is persisted).
+    const reopened = await storage.reopen();
+    expect((await reopened.pages.getById(page.id))?.blueprintEvidencePath).toBe(
+      'v1/evidence-page.json'
+    );
+    await reopened.close();
+
+    // Passing null clears it.
+    await storage.pages.updateBlueprintEvidencePath(page.id, null);
+    expect((await storage.pages.getById(page.id))?.blueprintEvidencePath).toBeNull();
+  });
+
+  it('preserves a stored evidence path when an upsert omits it', async () => {
+    await storage.pages.upsert(input(scanId));
+    const page = (await storage.pages.listByScan(scanId))[0]!;
+    await storage.pages.updateBlueprintEvidencePath(page.id, 'v1/evidence-page.json');
+
+    // A later crawl re-visit that does not carry evidence must not erase it.
+    await storage.pages.upsert(input(scanId, { title: 'Updated' }));
+    const updated = await storage.pages.getById(page.id);
+    expect(updated?.title).toBe('Updated');
+    expect(updated?.blueprintEvidencePath).toBe('v1/evidence-page.json');
   });
 });
 

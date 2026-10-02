@@ -24,6 +24,7 @@ import {
 } from './persistence/storageFile';
 import { AssetRepository } from './repositories/assetRepository';
 import { AuthSessionRepository } from './repositories/authSessionRepository';
+import { BlueprintRepository } from './repositories/blueprintRepository';
 import { ProjectRepository } from './repositories/projectRepository';
 import { ResponsiveCaptureRepository } from './repositories/responsiveCaptureRepository';
 import { ScanPageRepository } from './repositories/scanPageRepository';
@@ -41,6 +42,7 @@ export interface StorageRepositories {
   authSessions: AuthSessionRepository;
   responsiveCaptures: ResponsiveCaptureRepository;
   assets: AssetRepository;
+  blueprints: BlueprintRepository;
   settings: SettingsRepository;
 }
 
@@ -69,6 +71,7 @@ function buildRepositories(context: StorageContext): StorageRepositories {
     authSessions: new AuthSessionRepository(context),
     responsiveCaptures: new ResponsiveCaptureRepository(context),
     assets: new AssetRepository(context),
+    blueprints: new BlueprintRepository(context),
     settings: new SettingsRepository(context)
   };
 }

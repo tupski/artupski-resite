@@ -41,6 +41,7 @@ export {
 
 export { AssetRepository } from './repositories/assetRepository';
 export { AuthSessionRepository } from './repositories/authSessionRepository';
+export { BlueprintRepository } from './repositories/blueprintRepository';
 export { ProjectRepository } from './repositories/projectRepository';
 export {
   ResponsiveCaptureRepository,
@@ -63,11 +64,13 @@ export {
 } from './errors';
 
 export type {
+  BlueprintRow,
   CreateAuthSessionInput,
   CreateProjectInput,
   CreateScanInput,
   CreateScanTechnologyInput,
   UpdateProjectInput,
+  UpsertBlueprintInput,
   UpsertCloneAssetInput,
   UpsertScanPageInput,
   UpsertScanTechnologyInput

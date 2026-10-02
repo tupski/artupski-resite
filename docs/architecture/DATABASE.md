@@ -42,7 +42,7 @@ The Phase 2 local storage foundation is implemented in `src/services/storage/`. 
 `projects`, `scans`, `scan_technologies` (per section 3) and `app_settings` (`key TEXT PRIMARY KEY`, `value TEXT`, `updated_at`) - the latter is an addition driven by PLAN.md Phase 2 ("settings") and is documented as such. Indexes: `idx_projects_status`, `idx_projects_updated_at`, `idx_scans_project_id`, `idx_scan_tech_scan_id`.
 
 #### Deferred tables (intentionally NOT created in Phase 2)
-`scan_assets`, `blueprints`, `auth_sessions`. These arrive with their owning phases and are not omissions. (`scan_pages` is added by migration `002` in Phase 4 - see section 2.2.)
+`scan_assets`, `blueprints`, `auth_sessions`. These arrive with their owning phases and are not omissions. (`scan_pages` is added by migration `002` in Phase 4 - see section 2.2; `scan_assets` by `007` in Phase 8 - see section 2.6; `blueprints` by `008` in Phase 9 - see section 2.7; `auth_sessions` by `004` in the authentication phase - see section 2.4.)
 
 ### 2.2 Phase 4 Implementation Note (workstream 2, as built)
 
@@ -97,6 +97,18 @@ The static clone phase adds one **forward-only** migration; `001`-`006` are neve
 - **Asset storage**: bytes are written through the sandboxed Rust `clone_write` command under `<app_local_data_dir>/clones/v1/`; only the relative path + bounded metadata are persisted. The database stays small (it is exported as one WASM buffer).
 - **Repository**: `AssetRepository` (`src/services/storage/repositories/assetRepository.ts`) owns all SQL for `scan_assets` - `upsertMany` (batched, one transaction + one persist; `(scan_id, sha256)` conflict target), `upsert`, `getById`, `listByScan`, `listByPage`, `countByScan`, `deleteByScan`.
 - **Cascade**: deleting a scan removes its assets; deleting a page nulls `page_id` (the asset survives, keyed by `page_url`).
+
+### 2.7 Website Blueprint Implementation Note (as built, Phase 9)
+
+The Blueprint phase adds one **forward-only** migration; `001`-`007` are never edited. It also fixes the **Phase 4/6/7 critical gap**: no prior phase persisted a traversable DOM or any computed-style evidence, so a new worker command `captureBlueprint` captures bounded, secret-free evidence per page.
+
+- **Migration `008_blueprints.ts` (version `8`)** creates `blueprints` (matching the section-3 sketch) and adds a nullable `blueprint_evidence_path` column to `scan_pages`:
+  - Columns: `id`, `project_id` (`REFERENCES projects(id) ON DELETE CASCADE`), `scan_id` (`REFERENCES scans(id) ON DELETE SET NULL`), `version` (document revision), `schema_version` (Blueprint schema revision), `file_path` (the sandboxed on-disk document path, NOT the DB), `is_valid`, `validation_errors` (JSON array), `created_at`, `updated_at`.
+  - **Indexes**: a **UNIQUE** `idx_blueprints_scan_version (scan_id, version)` so re-running synthesis updates a revision rather than duplicating it, plus `idx_blueprints_project_id` and `idx_blueprints_scan_id`.
+  - **Additive column** `scan_pages.blueprint_evidence_path TEXT` (`ALTER TABLE ... ADD COLUMN`, nullable) records where a page's captured bounded DOM/computed-style evidence lives on disk. Legacy rows and non-blueprint scans are unaffected.
+- **Document storage (deviation, open decision C11)**: the Blueprint document JSON is written through the sandboxed Rust `blueprint_write` command to `<app_local_data_dir>/blueprints/v1/<id>.json`; only the path + validation metadata are persisted. This resolves the `DATABASE.md` section 6 per-project `blueprint/` sketch toward the safe sandbox used by `asset.rs`/`clone.rs`, keeping the database small (it is exported as one WASM buffer).
+- **Repository**: `BlueprintRepository` (`src/services/storage/repositories/blueprintRepository.ts`) owns all SQL for `blueprints` - `upsert` (by `(scan_id, version)`), `getById`, `listByProject`, `listByScan`, `getLatestByScan`, `countByScan`, `deleteById`, `deleteByScan`, `deleteByProject`.
+- **Cascade**: deleting a project removes its blueprints; deleting a scan nulls `scan_id` (the document row survives, still reachable by project). An invalid document is persisted with `is_valid = 0` + bounded `validation_errors`, never discarded.
 
 ---
 
@@ -245,6 +257,8 @@ CREATE INDEX IF NOT EXISTS idx_scan_technologies_category ON scan_technologies(c
 -- Blueprints
 CREATE INDEX IF NOT EXISTS idx_blueprints_project_id ON blueprints(project_id);
 CREATE INDEX IF NOT EXISTS idx_blueprints_scan_id ON blueprints(scan_id);
+-- Re-running synthesis updates a revision instead of duplicating (Phase 9).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_blueprints_scan_version ON blueprints(scan_id, version);
 
 -- Auth sessions
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_project_id ON auth_sessions(project_id);
@@ -315,6 +329,15 @@ Data partitioned into standardized workspace root directory:
               ├── src/
               └── public/
 ```
+
+### 6.1 As-built sandbox layout (Phases 4-9)
+
+The section-6 sketch above is the original per-project workspace proposal. In the as-built implementation, generated artifacts live under the **app-local-data** sandbox (one root per install) and the database stores only relative paths:
+
+- Responsive screenshots: `<app_local_data_dir>/assets/responsive/<scanId>/` (Phase 7, `asset.rs`).
+- Static clone tree: `<app_local_data_dir>/clones/v1/` (Phase 8, `clone.rs`).
+- Blueprint documents: `<app_local_data_dir>/blueprints/v1/<id>.json` (Phase 9, `blueprint.rs`; open decision C11).
+- Blueprint evidence: bounded per-page DOM/computed-style evidence on disk, referenced by `scan_pages.blueprint_evidence_path` (Phase 9).
 
 ### Storage Cleaning & Retention Rules
 - Temporary Playwright artifacts (.har, raw traces) pruned upon user request or auto-purged if project marked archived.

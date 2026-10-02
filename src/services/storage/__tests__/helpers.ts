@@ -12,6 +12,7 @@ import { createStorage, type StorageInstance } from '../storageService';
 import type { StorageContext } from '../context';
 import { AssetRepository } from '../repositories/assetRepository';
 import { AuthSessionRepository } from '../repositories/authSessionRepository';
+import { BlueprintRepository } from '../repositories/blueprintRepository';
 import { ProjectRepository } from '../repositories/projectRepository';
 import { ResponsiveCaptureRepository } from '../repositories/responsiveCaptureRepository';
 import { ScanPageRepository } from '../repositories/scanPageRepository';
@@ -31,6 +32,7 @@ export interface TestStorage {
   authSessions: AuthSessionRepository;
   responsiveCaptures: ResponsiveCaptureRepository;
   assets: AssetRepository;
+  blueprints: BlueprintRepository;
   settings: SettingsRepository;
   /** Export current bytes (as the persisted database would be). */
   exportBytes(): Uint8Array;
@@ -59,6 +61,7 @@ function wrap(instance: StorageInstance, file: MemoryStorageFile): TestStorage {
     authSessions: new AuthSessionRepository(context),
     responsiveCaptures: new ResponsiveCaptureRepository(context),
     assets: new AssetRepository(context),
+    blueprints: new BlueprintRepository(context),
     settings: new SettingsRepository(context),
     exportBytes: () => db.export(),
     reopen: async () => {

@@ -13,6 +13,13 @@ export {
   cloneWrite,
   cloneRead,
   cloneDelete,
+  blueprintRoot,
+  blueprintWrite,
+  blueprintRead,
+  blueprintDelete,
+  blueprintGenerate,
+  blueprintGetLatest,
+  blueprintExport,
   onProcessEvent
 } from './commands';
 export type {
@@ -23,5 +30,8 @@ export type {
   ProcessStatusInfo,
   SpawnProcessArgs,
   ProcessStreamEvent,
-  ProcessExitEvent
+  ProcessExitEvent,
+  BlueprintGenerateArgs,
+  BlueprintGenerateResult,
+  BlueprintExportResult
 } from './commands';

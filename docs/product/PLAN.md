@@ -269,6 +269,7 @@ Delivered on top of the Phase 4 crawler and Phase 7 responsive analysis; **no ne
 ---
 
 ## Phase 9: Website Blueprint Specification & Normalization Engine
+- **Status**: COMPLETE (see the Phase 9 implementation notes below).
 - **Goal**: Parse raw DOM and styles into structured Blueprint JSON schema.
 - **Scope**: DOM-to-Component tree parser, design token extractor, route definition synthesizer.
 - **Dependencies**: Phase 6, Phase 7.
@@ -281,6 +282,19 @@ Delivered on top of the Phase 4 crawler and Phase 7 responsive analysis; **no ne
 - **Acceptance Criteria**: Emitted blueprint passes Zod validation schema completely.
 - **Potential Risks**: Complex nested DOM structures leading to bloated component trees.
 - **Verification**: Inspect generated `blueprint.json` structure for valid token and component nodes.
+
+### Phase 9 Implementation Notes (as built)
+
+Delivered on top of the Phase 4 crawler, Phase 6 technology detection, and Phase 7 responsive analysis; **no new process manager, browser runtime, or crawler was created**, and the worker protocol was extended additively (`WORKER_PROTOCOL_VERSION` stays `1`). The full pre-implementation plan (schema tables, module list, migration, protocol, tests, risks, and the C8-C13 decision resolutions) is `docs/impl-plan/phase-9-impl-plan.md`.
+
+1. **Prerequisite evidence capture (CRITICAL-GAP fix first, mirroring Phase 8)**: the Blueprint is defined as a normalization of parsed DOM + computed styles, but no phase persisted a traversable DOM or any computed-style evidence. Phase 9 therefore adds a bounded, read-only worker command `captureBlueprint` (`src/workers/crawler/blueprintCapture.ts`) and a persisted per-page evidence path (migration `008` `scan_pages.blueprint_evidence_path`). The probe walks a bounded DOM and reads a computed-style subset, CSS custom properties, `@font-face` metadata, form structure, nav regions, headings, links, and images (URL/alt only). It **never** reads cookie/storage values, input `value`s, password contents, or `Authorization` headers; attributes are allowlisted and `script`/`style` bodies are stripped.
+2. **Schema**: `src/types/blueprint.ts` is the single runtime validator, mirroring `BLUEPRINT-SPEC.md` sections 3-4 with a strict Zod schema (`blueprint_version: 1`, every required section, bounded recursion: `MAX_COMPONENT_DEPTH`/`MAX_COMPONENTS`/`MAX_PAGES`/`MAX_ROUTES`/`MAX_NAV_DEPTH`, `.strict()` objects, cycle detection) plus an **optional, additive** `provenance` namespace and optional per-node `confidence` that distinguish observed evidence from inferred classification. **Dependency deviation**: `zod@^3.23.8` was added as a runtime dependency (the spec's authoritative validator is Zod; the repo previously had no runtime Zod).
+3. **Normalization engine**: `src/services/blueprint/` - `domNormalizer`, `designTokens`, `routes`, `forms`, `content`, `assets`, `technologies`, `site`, `analytics`, `infrastructure`, `evidence`, `assemble`, `validate`, `util` (pure), composed by `blueprintService` and the `runBlueprint` UI seam. Missing/conflicting evidence is represented as absent/empty, never fabricated.
+4. **Persistence**: forward-only migration `008_blueprints.ts` (version 8) creates `blueprints` (matching the `DATABASE.md` section 3 sketch, with a UNIQUE `(scan_id, version)` index so re-runs update a revision) and adds nullable `scan_pages.blueprint_evidence_path`. `BlueprintRepository` owns all its SQL. The document itself lives at `<app_local_data_dir>/blueprints/v1/<id>.json` through a new sandboxed `src-tauri/src/blueprint.rs`; only the path + validation metadata are stored in SQLite. See `DATABASE.md` section 2.7.
+5. **Lifecycle**: `blueprintLifecycle.ts` runs synthesis -> writes the document -> upserts the row (rolling the file back if the row write fails) -> emits `blueprint.*`, and **never throws**. It is integrated in `scanService.runScan` after a COMPLETED crawl and after technology/responsive/evidence steps, gated by `runScan({ blueprint: true })`; a Blueprint failure can never change the crawl's terminal status. An **invalid** document is persisted with `is_valid = 0` rather than discarded.
+6. **UI**: a read-only `BlueprintPanel` (`src/components/blueprint/BlueprintPanel.tsx`, backed by `src/stores/blueprintStore.ts`) is mounted on the Scan route, with honest `idle | loading | empty | ready | partial | error` states, a validator badge, and JSON export. No document, component, or token is fabricated.
+7. **Documented decisions (C8-C13)**: resolved in `docs/impl-plan/phase-9-impl-plan.md` section 15 - **C8** optional additive provenance; **C9** navigation items validated with a concrete schema (the spec's §4 `z.array(z.any())` is a validator omission, §3 types them); **C10** state modeled via `interactions[]` + `variants` (no non-spec `state` section); **C11** output at `<app_local_data_dir>/blueprints/v1/` (sandbox over the `DATABASE.md` per-project path, same rationale as Phase 8 C4); **C12** new additive `captureBlueprint` command + persisted evidence path (not a second crawler); **C13** synthesis is opt-in via `runScan({ blueprint: true })`.
+8. **Deferred / out of scope**: AI/LLM synthesis (Phase 10-11), code generation (Phase 12), visual diffing (Phase 13), and doc/ZIP export (Phase 14). Tailwind responsive-rule inference from responsive captures stays deferred Phase 7 work and is **not** part of Phase 9.
 
 ---
 

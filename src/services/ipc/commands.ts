@@ -9,6 +9,8 @@
  * AI, and generator commands are deliberately absent.
  */
 import { createStructuredError, toStructuredError, type StructuredError } from '../infra/errors';
+import type { BlueprintRoot } from '../../types/blueprint';
+import type { Blueprint as BlueprintRecord } from '../../types/models';
 import { isTauriRuntime } from './tauri';
 
 /** Rust `app_info` command response. */
@@ -251,6 +253,238 @@ export function cloneDelete(relative: string): Promise<IpcResult<void>> {
       message: 'Failed to delete the clone file.'
     }
   );
+}
+
+/**
+ * Return the absolute sandboxed blueprint root (`<app_local_data_dir>/blueprints`).
+ * The frontend never supplies a path.
+ */
+export function blueprintRoot(): Promise<IpcResult<string>> {
+  return safeInvoke<string>(
+    'blueprint_root',
+    {},
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to resolve the blueprint directory.'
+    }
+  );
+}
+
+/**
+ * Write a Blueprint JSON document. `id` is a single safe path segment (never a
+ * path); the Rust `blueprint_write` command writes `<blueprints>/v1/<id>.json`
+ * and rejects absolute paths, separators, and `.`/`..`.
+ */
+export function blueprintWrite(id: string, data: Uint8Array): Promise<IpcResult<string>> {
+  return safeInvoke<string>(
+    'blueprint_write',
+    { id, data: Array.from(data) },
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to write the blueprint file.'
+    }
+  );
+}
+
+/** Read a previously written Blueprint document. A missing file returns an error. */
+export function blueprintRead(id: string): Promise<IpcResult<number[]>> {
+  return safeInvoke<number[]>(
+    'blueprint_read',
+    { id },
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to read the blueprint file.'
+    }
+  );
+}
+
+/** Delete a previously written Blueprint document. A missing file is treated as success. */
+export function blueprintDelete(id: string): Promise<IpcResult<void>> {
+  return safeInvoke<void>(
+    'blueprint_delete',
+    { id },
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to delete the blueprint file.'
+    }
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Blueprint lifecycle commands (Phase 9)                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Input for `blueprintGenerate`. Only ids are accepted - the lifecycle wrapper
+ * resolves the document + sandboxed path itself; the UI never supplies a path.
+ */
+export interface BlueprintGenerateArgs {
+  scanId: string;
+  projectId: string;
+  /** Optional seed URL override; otherwise derived from the scan's pages. */
+  sourceUrl?: string;
+}
+
+/** Honest outcome of a Blueprint generate request. */
+export interface BlueprintGenerateResult {
+  blueprintId: string | null;
+  version: number;
+  isValid: boolean;
+  validationErrors: Array<{ code: string; path: string; message: string }>;
+  pageCount: number;
+  componentCount: number;
+  skippedPages: number;
+  partial: boolean;
+  failed: boolean;
+}
+
+/**
+ * Synthesize + persist a Blueprint for a completed scan, then return the honest
+ * lifecycle summary. This is a thin wrapper over `runBlueprintLifecycle` (the
+ * same seam `scanService` uses); it never throws and never changes a scan's
+ * terminal status. The Rust sandbox (`blueprint_write`) is reused, never
+ * duplicated.
+ */
+export async function blueprintGenerate(
+  args: BlueprintGenerateArgs
+): Promise<IpcResult<BlueprintGenerateResult>> {
+  try {
+    const { runBlueprintLifecycle } = await import('../blueprint/blueprintLifecycle');
+    const outcome = await runBlueprintLifecycle({
+      scanId: args.scanId,
+      projectId: args.projectId,
+      ...(args.sourceUrl ? { sourceUrl: args.sourceUrl } : {})
+    });
+    return {
+      ok: true,
+      data: {
+        blueprintId: outcome.blueprintId,
+        version: outcome.version,
+        isValid: outcome.isValid,
+        validationErrors: outcome.validationErrors.map((error) => ({ ...error })),
+        pageCount: outcome.pageCount,
+        componentCount: outcome.componentCount,
+        skippedPages: outcome.skippedPages,
+        partial: outcome.partial,
+        failed: outcome.failed
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: toStructuredError(error, {
+        code: 'BLUEPRINT_VALIDATION_FAILED',
+        category: 'blueprint',
+        message: 'Failed to generate the Blueprint.',
+        recoverable: true,
+        retryable: true
+      })
+    };
+  }
+}
+
+/**
+ * Load the latest persisted Blueprint row for a scan (metadata only; no document
+ * bytes). The store uses this to render honest metadata without reading the
+ * (large) JSON until it is actually displayed.
+ */
+export async function blueprintGetLatest(
+  scanId: string
+): Promise<IpcResult<BlueprintRecord | null>> {
+  try {
+    const { storageService } = await import('../storage');
+    if (storageService.getState() !== 'ready') {
+      return {
+        ok: false,
+        error: createStructuredError({
+          code: 'STORAGE_NOT_READY',
+          category: 'database',
+          message: 'Cannot read the Blueprint: local storage is not ready.',
+          severity: 'warning',
+          recoverable: true,
+          suggestedAction: 'Wait for local storage to finish initializing, then retry.'
+        })
+      };
+    }
+    const record = await storageService.getRepositories().blueprints.getLatestByScan(scanId);
+    return { ok: true, data: record };
+  } catch (error) {
+    return {
+      ok: false,
+      error: toStructuredError(error, {
+        code: 'STORAGE_READ_FAILED',
+        category: 'database',
+        message: 'Failed to read the Blueprint metadata.'
+      })
+    };
+  }
+}
+
+/** A loaded Blueprint document plus its honest read state. */
+export interface BlueprintExportResult {
+  blueprintId: string;
+  version: number;
+  isValid: boolean;
+  validationErrors: Array<{ code: string; path: string; message: string }>;
+  /** Pretty-printed document JSON, or null when it could not be read. */
+  json: string | null;
+  /** Parsed document, or null when it could not be read/parsed. */
+  document: BlueprintRoot | null;
+  /** Honest read failure reason, or null. */
+  readError: string | null;
+}
+
+/**
+ * Read the latest Blueprint document for a scan through the sandboxed
+ * `blueprint_read` seam, ready for export/viewing. An unreadable document is
+ * reported honestly (`json: null`, `readError` set) rather than fabricated.
+ */
+export async function blueprintExport(
+  scanId: string
+): Promise<IpcResult<BlueprintExportResult | null>> {
+  try {
+    const { storageService } = await import('../storage');
+    if (storageService.getState() !== 'ready') {
+      return {
+        ok: false,
+        error: createStructuredError({
+          code: 'STORAGE_NOT_READY',
+          category: 'database',
+          message: 'Cannot export the Blueprint: local storage is not ready.',
+          severity: 'warning',
+          recoverable: true,
+          suggestedAction: 'Wait for local storage to finish initializing, then retry.'
+        })
+      };
+    }
+    const record = await storageService.getRepositories().blueprints.getLatestByScan(scanId);
+    if (!record) {
+      return { ok: true, data: null };
+    }
+    const { loadBlueprintDocument } = await import('../blueprint/blueprintLifecycle');
+    const view = await loadBlueprintDocument(record);
+    return {
+      ok: true,
+      data: {
+        blueprintId: record.id,
+        version: record.version,
+        isValid: record.isValid,
+        validationErrors: record.validationErrors.map((error) => ({ ...error })),
+        json: view.json,
+        document: view.document,
+        readError: view.readError
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: toStructuredError(error, {
+        code: 'STORAGE_READ_FAILED',
+        category: 'blueprint',
+        message: 'Failed to export the Blueprint document.'
+      })
+    };
+  }
 }
 
 /** Payload of the Rust `process://stdout` / `process://stderr` events. */

@@ -53,6 +53,7 @@ export type WorkerCommandName =
   | 'captureState'
   | 'captureViewport'
   | 'captureAssets'
+  | 'captureBlueprint'
   | 'serveClone'
   | 'stopClone';
 
@@ -125,6 +126,38 @@ export const MAX_ASSET_COUNT = 200;
  * exceed this are dropped and counted in `skipped` - never silently substituted.
  */
 export const MAX_ASSET_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Maximum number of DOM nodes a single `captureBlueprint` call may return. Over
+ * this, the traversal stops and the result is flagged `truncated`.
+ */
+export const MAX_BLUEPRINT_NODES = 5000;
+
+/**
+ * Documented upper bound for the serialized blueprint evidence document (4 MiB).
+ * A caller may request less via `maxBytes`; the worker never exceeds this.
+ */
+export const MAX_BLUEPRINT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Maximum characters retained per captured text snippet (headings, labels,
+ * button copy, own-element text). Longer text is truncated and flagged.
+ */
+export const MAX_BLUEPRINT_TEXT_CHARS = 200;
+
+/** Maximum number of `<form>` descriptors captured per page. */
+export const MAX_BLUEPRINT_FORMS = 50;
+
+/** Maximum number of CSS custom properties captured per page. */
+export const MAX_BLUEPRINT_CSS_VARS = 500;
+
+/**
+ * Hard ceiling for the evidence actually carried in a single result frame. A
+ * frame must fit `MAX_FRAME_BYTES`, so the worker trims the evidence to this
+ * budget (headroom reserved for the envelope) even when a larger `maxBytes` is
+ * requested; the result is flagged `truncated`.
+ */
+export const MAX_BLUEPRINT_FRAME_BYTES = MAX_FRAME_BYTES - 32 * 1024;
 
 /** The standard responsive profiles (RESPONSIVE-SPEC section 1.1). Desktop first. */
 export const RESPONSIVE_VIEWPORT_PROFILES: readonly ViewportProfile[] = [
@@ -306,6 +339,28 @@ export interface CaptureAssetsCommandPayload {
 }
 
 /**
+ * Capture bounded, read-only Blueprint evidence (Phase 9, decision C12): the
+ * semantic DOM tree plus the computed-style subset the Blueprint normalizer
+ * needs for design tokens. The worker navigates with the SAME URL policy as
+ * `extract`/`captureAssets`, then returns structure + styles ONLY.
+ *
+ * SECURITY: this command never reads cookie values, storage values, input
+ * field values, auth headers, or password contents. Attributes are allowlisted
+ * and script bodies are stripped; only structural/style evidence is returned.
+ */
+export interface CaptureBlueprintCommandPayload {
+  command: 'captureBlueprint';
+  sessionId: string;
+  url: string;
+  /** Navigation timeout in ms. The worker clamps this to <= 30000. */
+  timeoutMs: number;
+  /** Max DOM nodes to return; clamped to `MAX_BLUEPRINT_NODES`. */
+  maxNodes?: number;
+  /** Max serialized evidence bytes; clamped to `MAX_BLUEPRINT_BYTES`. */
+  maxBytes?: number;
+}
+
+/**
  * Start the local static preview server (Phase 8) for the sandboxed clone tree.
  * The `root` is the absolute clones directory resolved by Rust; the worker binds
  * loopback-only and serves strictly from that root.
@@ -333,6 +388,7 @@ export type WorkerCommandPayload =
   | CaptureStateCommandPayload
   | CaptureViewportCommandPayload
   | CaptureAssetsCommandPayload
+  | CaptureBlueprintCommandPayload
   | ServeCloneCommandPayload
   | StopCloneCommandPayload;
 
@@ -477,6 +533,162 @@ export interface CaptureAssetsResultPayload {
   truncated: boolean;
 }
 
+/** The computed-style subset captured per node (design-token evidence only). */
+export interface BlueprintEvidenceStyles {
+  display: string;
+  position: string;
+  flexDirection: string;
+  gridTemplateColumns: string;
+  fontSize: string;
+  fontWeight: string;
+  lineHeight: string;
+  color: string;
+  backgroundColor: string;
+  borderColor: string;
+  borderRadius: string;
+  boxShadow: string;
+  margin: string;
+  padding: string;
+  gap: string;
+  fontFamily: string;
+}
+
+/** One bounded, semantic DOM node (never a secret; attributes allowlisted). */
+export interface BlueprintEvidenceNode {
+  id: string;
+  parentId: string | null;
+  tag: string;
+  /** Explicit `role` attribute, or '' when absent. */
+  role: string;
+  /** Semantic hints derived from tag/landmark/aria (e.g. `nav`, `main`). */
+  semantic: string[];
+  /** Bounded own-text snippet; '' when none. Never an input value. */
+  text: string;
+  /** Allowlisted attributes (no `value`, no `style`, no event handlers). */
+  attrs: Record<string, string>;
+  classes: string[];
+  childIds: string[];
+  visible: boolean;
+  bounds: { x: number; y: number; width: number; height: number };
+  styles: BlueprintEvidenceStyles;
+}
+
+/** One captured link (anchor) with its bounded label. */
+export interface BlueprintEvidenceLink {
+  href: string;
+  text: string;
+  target: string | null;
+  /** Node id the link belongs to. */
+  nodeId: string;
+}
+
+/** One captured heading (level + bounded text). */
+export interface BlueprintEvidenceHeading {
+  level: number;
+  text: string;
+  nodeId: string;
+}
+
+/** One captured image (source URL + alt; never bytes). */
+export interface BlueprintEvidenceImage {
+  src: string;
+  alt: string;
+  width: number | null;
+  height: number | null;
+  nodeId: string;
+}
+
+/** One navigation region (a `nav`/header/footer menu) with its items. */
+export interface BlueprintEvidenceNav {
+  /** `header` | `footer` | `nav` (the landmark the items were found in). */
+  region: string;
+  label: string;
+  items: Array<{ href: string; text: string; target: string | null; depth: number }>;
+}
+
+/** One captured form field. `value` is NEVER read or returned. */
+export interface BlueprintEvidenceFormField {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+  placeholder: string | null;
+  options: Array<{ label: string; value: string }>;
+  /** Bounded HTML validation attributes (pattern/min/max/minlength/maxlength). */
+  validations: Record<string, string>;
+}
+
+/** One captured form descriptor. */
+export interface BlueprintEvidenceForm {
+  id: string;
+  name: string;
+  method: string;
+  action: string;
+  fields: BlueprintEvidenceFormField[];
+  submitButtonLabel: string;
+}
+
+/** One `@font-face` family/weight/style declaration (never font bytes). */
+export interface BlueprintEvidenceFontFace {
+  family: string;
+  weight: string;
+  style: string;
+}
+
+/**
+ * The bounded, read-only Blueprint evidence document (Phase 9). This is the
+ * exact JSON persisted to disk and referenced by `scan_pages.blueprint_evidence_path`.
+ * It contains ONLY structure + computed styles - never cookies, storage values,
+ * input values, auth headers, or credentials.
+ */
+export interface BlueprintEvidence {
+  /** Final URL the evidence was captured from. */
+  url: string;
+  /** HTTP status observed for the navigation (null when unavailable). */
+  status: number | null;
+  /** ISO-8601 capture timestamp. */
+  capturedAt: string;
+  /** Bounded semantic DOM tree (root first). */
+  nodes: BlueprintEvidenceNode[];
+  /** CSS custom properties read from `:root`/`html` (bounded). */
+  cssVariables: Record<string, string>;
+  /** `@font-face` declarations observed in applied stylesheets (bounded). */
+  fontFaces: BlueprintEvidenceFontFace[];
+  /** Captured form descriptors (bounded; field values never read). */
+  forms: BlueprintEvidenceForm[];
+  /** Captured navigation regions (bounded). */
+  nav: BlueprintEvidenceNav[];
+  /** Captured headings (bounded). */
+  headings: BlueprintEvidenceHeading[];
+  /** Captured links (bounded). */
+  links: BlueprintEvidenceLink[];
+  /** Captured images (bounded; URL + alt only). */
+  images: BlueprintEvidenceImage[];
+  /** True when any cap was hit (nodes/bytes/text/forms/links/...). */
+  truncated: boolean;
+  /** Total nodes observed before any cap was applied. */
+  nodeCount: number;
+  /** UTF-8 byte length of the serialized evidence document. */
+  byteLength: number;
+  /** The caps actually applied to this capture. */
+  limits: {
+    maxNodes: number;
+    maxBytes: number;
+    maxTextChars: number;
+    maxForms: number;
+    maxCssVars: number;
+  };
+}
+
+export interface CaptureBlueprintResultPayload {
+  command: 'captureBlueprint';
+  sessionId: string;
+  url: string;
+  finalUrl: string;
+  status: number | null;
+  evidence: BlueprintEvidence;
+}
+
 export interface ServeCloneResultPayload {
   command: 'serveClone';
   /** The loopback origin the preview server is listening on. */
@@ -521,6 +733,7 @@ export type WorkerResultPayload =
   | CaptureStateResultPayload
   | CaptureViewportResultPayload
   | CaptureAssetsResultPayload
+  | CaptureBlueprintResultPayload
   | ServeCloneResultPayload
   | StopCloneResultPayload;
 
@@ -629,6 +842,7 @@ const COMMAND_NAMES: readonly WorkerCommandName[] = [
   'captureState',
   'captureViewport',
   'captureAssets',
+  'captureBlueprint',
   'serveClone',
   'stopClone'
 ];
@@ -777,6 +991,17 @@ function validateCommandPayload(payload: unknown): boolean {
         (payload.maxAssetBytes === undefined ||
           (typeof payload.maxAssetBytes === 'number' && Number.isInteger(payload.maxAssetBytes)))
       );
+    case 'captureBlueprint':
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNonEmptyString(payload.url) &&
+        typeof payload.timeoutMs === 'number' &&
+        Number.isFinite(payload.timeoutMs) &&
+        (payload.maxNodes === undefined ||
+          (typeof payload.maxNodes === 'number' && Number.isInteger(payload.maxNodes))) &&
+        (payload.maxBytes === undefined ||
+          (typeof payload.maxBytes === 'number' && Number.isInteger(payload.maxBytes)))
+      );
     case 'serveClone':
       return (
         isNonEmptyString(payload.root) &&
@@ -869,6 +1094,14 @@ function validateResultPayload(payload: unknown): boolean {
         typeof payload.skipped === 'number' &&
         typeof payload.truncated === 'boolean'
       );
+    case 'captureBlueprint':
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNonEmptyString(payload.url) &&
+        isNonEmptyString(payload.finalUrl) &&
+        (payload.status === null || typeof payload.status === 'number') &&
+        isBlueprintEvidenceShape(payload.evidence)
+      );
     case 'serveClone':
       return (
         isNonEmptyString(payload.url) &&
@@ -903,6 +1136,56 @@ function isRawHtmlCapture(value: unknown): boolean {
     typeof value.html === 'string' &&
     typeof value.byteLength === 'number' &&
     typeof value.truncated === 'boolean'
+  );
+}
+
+/**
+ * Bounded structural check of a Blueprint evidence document. The full type lives
+ * in this module; this validates the fields the host relies on so a malformed
+ * worker result is rejected at the protocol boundary. Node/collection counts are
+ * capped so a hostile (or buggy) worker cannot smuggle an unbounded frame.
+ */
+function isBlueprintEvidenceShape(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (!Array.isArray(value.nodes) || value.nodes.length > MAX_BLUEPRINT_NODES) {
+    return false;
+  }
+  const nodeOk = value.nodes.every(
+    (node) =>
+      isRecord(node) &&
+      typeof node.id === 'string' &&
+      (node.parentId === null || typeof node.parentId === 'string') &&
+      typeof node.tag === 'string' &&
+      Array.isArray(node.semantic) &&
+      typeof node.text === 'string' &&
+      isRecord(node.attrs) &&
+      Array.isArray(node.classes) &&
+      Array.isArray(node.childIds) &&
+      typeof node.visible === 'boolean' &&
+      isRecord(node.styles)
+  );
+  if (!nodeOk) {
+    return false;
+  }
+  return (
+    isNonEmptyString(value.url) &&
+    (value.status === null || typeof value.status === 'number') &&
+    typeof value.capturedAt === 'string' &&
+    isRecord(value.cssVariables) &&
+    Object.keys(value.cssVariables).length <= MAX_BLUEPRINT_CSS_VARS &&
+    Array.isArray(value.fontFaces) &&
+    Array.isArray(value.forms) &&
+    value.forms.length <= MAX_BLUEPRINT_FORMS &&
+    Array.isArray(value.nav) &&
+    Array.isArray(value.headings) &&
+    Array.isArray(value.links) &&
+    Array.isArray(value.images) &&
+    typeof value.truncated === 'boolean' &&
+    typeof value.nodeCount === 'number' &&
+    typeof value.byteLength === 'number' &&
+    isRecord(value.limits)
   );
 }
 

@@ -8,6 +8,7 @@
 use serde::Serialize;
 
 mod asset;
+mod blueprint;
 mod clone;
 mod process;
 mod storage;
@@ -69,6 +70,10 @@ pub fn run() {
             clone::clone_write,
             clone::clone_read,
             clone::clone_delete,
+            blueprint::blueprint_root,
+            blueprint::blueprint_write,
+            blueprint::blueprint_read,
+            blueprint::blueprint_delete,
             process::process_spawn,
             process::process_write,
             process::process_kill,

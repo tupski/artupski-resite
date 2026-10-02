@@ -9,6 +9,7 @@ import { IconAlert } from '../components/ui/icons';
 import { TechnologyPanel } from '../components/scan/TechnologyPanel';
 import { ViewportPreview } from '../components/scan/ViewportPreview';
 import { ClonePanel } from '../components/clone/ClonePanel';
+import { BlueprintPanel } from '../components/blueprint/BlueprintPanel';
 import { AuthCapturePanel } from '../components/auth/AuthCapturePanel';
 import { SCAN_STATUS_LABEL, type ScanStatus } from '../types/scan';
 import { useScanStore } from '../stores/scanStore';
@@ -17,6 +18,7 @@ import { useTechnologyStore } from '../stores/technologyStore';
 import { useAuthStore } from '../stores/authStore';
 import { useResponsiveStore } from '../stores/responsiveStore';
 import { useCloneStore } from '../stores/cloneStore';
+import { useBlueprintStore } from '../stores/blueprintStore';
 import { runClone, isCloneAvailable } from '../services/clone/runClone';
 import { validateTargetUrl } from '../lib/url';
 import { cn } from '../lib/cn';
@@ -96,6 +98,21 @@ export function ScanRoute() {
   const clearClone = useCloneStore((state) => state.clear);
   const [cloneGenerating, setCloneGenerating] = useState(false);
   const cloneAvailable = isCloneAvailable();
+
+  const blueprintStatus = useBlueprintStore((state) => state.status);
+  const blueprintRecord = useBlueprintStore((state) => state.record);
+  const blueprintDocument = useBlueprintStore((state) => state.document);
+  const blueprintValidationErrors = useBlueprintStore((state) => state.validationErrors);
+  const blueprintIsValid = useBlueprintStore((state) => state.isValid);
+  const blueprintPartial = useBlueprintStore((state) => state.partial);
+  const blueprintReadError = useBlueprintStore((state) => state.readError);
+  const blueprintLoading = useBlueprintStore((state) => state.loading);
+  const blueprintGenerating = useBlueprintStore((state) => state.generating);
+  const blueprintError = useBlueprintStore((state) => state.error);
+  const loadBlueprint = useBlueprintStore((state) => state.loadForScan);
+  const generateBlueprint = useBlueprintStore((state) => state.generate);
+  const exportBlueprintJson = useBlueprintStore((state) => state.exportJson);
+  const clearBlueprint = useBlueprintStore((state) => state.clear);
 
   const authMode = useAuthStore((state) => state.mode);
   const authSession = useAuthStore((state) => state.session);
@@ -186,6 +203,18 @@ export function ScanRoute() {
     void loadCloneAssets(scanId);
   }, [scanId, loadCloneAssets, clearClone]);
 
+  // Load the latest persisted Blueprint when a scan id appears, and mirror live
+  // `blueprint.*` events while it settles. The database is the source of truth.
+  useEffect(() => {
+    if (!scanId) {
+      clearBlueprint();
+      return;
+    }
+    void loadBlueprint(scanId);
+    const unsubscribe = useBlueprintStore.getState().watch(scanId);
+    return unsubscribe;
+  }, [scanId, loadBlueprint, clearBlueprint]);
+
   async function handleGenerateClone() {
     if (!scanId || !validation.valid) {
       return;
@@ -209,6 +238,37 @@ export function ScanRoute() {
     } finally {
       setCloneGenerating(false);
     }
+  }
+
+  // Generate (or regenerate) a Blueprint for the completed scan. The store
+  // owns the lifecycle + reload; failures are surfaced through its error channel.
+  async function handleGenerateBlueprint() {
+    if (!scanId) {
+      return;
+    }
+    await generateBlueprint({
+      scanId,
+      projectId: projectId ?? '',
+      ...(validation.valid ? { sourceUrl: validation.url } : {})
+    });
+  }
+
+  // Export the loaded Blueprint as a JSON file download. The document is read
+  // through the store (sandboxed seam); an unreadable document yields nothing.
+  async function handleExportBlueprint() {
+    const json = await exportBlueprintJson();
+    if (!json) {
+      return;
+    }
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `blueprint${scanId ? `-${scanId}` : ''}.json`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
   }
 
   // Keep the auth panel in sync with the selected project's persisted session
@@ -648,6 +708,37 @@ export function ScanRoute() {
               onGenerate={() => void handleGenerateClone()}
               onOpenPreview={() => void openClonePreview()}
               onClosePreview={() => void closeClonePreview()}
+            />
+          </Panel>
+        ) : null}
+
+        {scanId ? (
+          <Panel
+            title="Website blueprint"
+            actions={
+              blueprintRecord ? (
+                blueprintIsValid ? (
+                  <Badge tone="success">Valid</Badge>
+                ) : (
+                  <Badge tone="danger">Invalid</Badge>
+                )
+              ) : undefined
+            }
+          >
+            <BlueprintPanel
+              status={blueprintStatus}
+              record={blueprintRecord}
+              document={blueprintDocument}
+              validationErrors={blueprintValidationErrors}
+              isValid={blueprintIsValid}
+              partial={blueprintPartial}
+              readError={blueprintReadError}
+              loading={blueprintLoading}
+              generating={blueprintGenerating}
+              error={blueprintError}
+              canGenerate={status === 'completed'}
+              onGenerate={() => void handleGenerateBlueprint()}
+              onExport={() => void handleExportBlueprint()}
             />
           </Panel>
         ) : null}

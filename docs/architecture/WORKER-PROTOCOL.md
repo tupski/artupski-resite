@@ -36,7 +36,7 @@ interface WorkerEnvelope<TType, TPayload> {
 
 | Type | Direction | Purpose |
 | :--- | :--- | :--- |
-| `command` | host → worker | An operation to perform (`ping`, `launch`, `navigate`, `close`, `extract`, `abort`, `detectLogin`, `captureState`, `captureViewport`, `captureAssets`, `serveClone`, `stopClone`). |
+| `command` | host → worker | An operation to perform (`ping`, `launch`, `navigate`, `close`, `extract`, `abort`, `detectLogin`, `captureState`, `captureViewport`, `captureAssets`, `captureBlueprint`, `serveClone`, `stopClone`). |
 | `result` | worker → host | The correlated outcome of a command (matched by `id`). May carry `error`. |
 | `event` | worker → host | Asynchronous worker telemetry (e.g. `browser.launched`). |
 | `log` | worker → host | Structured log line (level + message + optional metadata). |
@@ -76,6 +76,7 @@ Phase 3 implements `ping` / `launch` / `navigate` / `close`. Phase 4 (workstream
 | `detectLogin` | `{ sessionId, url, timeoutMs }` | `{ sessionId, url, finalUrl, status, signals }` — boolean presence only; no page data. |
 | `captureState` | `{ sessionId, scopeHost }` | `{ sessionId, scopeHost, storageState, cookieCount, originCount }` — interactive capture snapshot, host-scoped. |
 | `captureViewport` | `{ sessionId, url, timeoutMs, profile }` | `{ sessionId, url, finalUrl, status, profile, screenshotBase64, detectedBreakpoints, elements, truncated }` — one viewport's screenshot + visible-element map (Phase 7). |
+| `captureBlueprint` | `{ sessionId, url, timeoutMs, maxNodes?, maxBytes? }` | `{ sessionId, url, finalUrl, status, evidence }` — bounded, read-only DOM + computed-style evidence for the Blueprint (Phase 9; see §8). |
 
 - `navigate.timeoutMs` and `extract.timeoutMs` are **clamped to ≤ 30 000 ms** by both the worker and the host client (AGENTS.md section 4, "Zero Headless Hangs").
 - `launch` throws `BROWSER_NOT_INSTALLED` when no Chromium build is present and no explicit `executablePath` was supplied.
@@ -136,7 +137,18 @@ The static clone phase extends the protocol **additively**; `WORKER_PROTOCOL_VER
 
 ---
 
-## 7. Security
+## 7. Phase 9 (blueprint evidence) additions (as built)
+
+Phase 9's critical-gap fix extends the protocol **additively**; `WORKER_PROTOCOL_VERSION` stays `1` and no existing frame changes meaning.
+
+- **`captureBlueprint`** navigates with the SAME URL policy enforcement as `extract`/`captureAssets` (pre-navigation and final-URL checks), then returns a **bounded semantic DOM tree** plus a **computed-style subset**: element `nodes[]` (tag, id/classes, role/aria, semantic hints, bounded text, allowlisted `attrs`, `childIds`, `visible`, `bounds`, `styles`), `cssVariables` (from `:root`/`html`), `fontFaces`, `forms` (fields/types/labels/required/placeholder/options/validation attributes), `nav` regions, `headings`, `links`, and `images` (URL + alt only). The result carries `truncated`, `nodeCount`, `byteLength`, and the applied `limits`.
+- **Caps**: `MAX_BLUEPRINT_NODES` (5000), `MAX_BLUEPRINT_BYTES` (4 MiB), `MAX_BLUEPRINT_TEXT_CHARS` (200), `MAX_BLUEPRINT_FORMS` (50), `MAX_BLUEPRINT_CSS_VARS` (500); a per-depth cap and per-category caps (links/images/headings/nav/options/font-faces) bound one category. Over-cap content is truncated and flagged; the evidence is always trimmed to fit one frame (`MAX_BLUEPRINT_FRAME_BYTES`).
+- **SECURITY — no secrets**: the probe NEVER reads cookie values, `localStorage`/`sessionStorage` values, input `value`s, password contents, or `Authorization` headers; `script`/`style` bodies are stripped; attributes are allowlisted (no `value`, no `style`, no event handlers). Only structural/style evidence is returned, logged, or persisted.
+- **Boundary validation**: `COMMAND_NAMES`, `validateCommandPayload`, and `validateResultPayload` cover the new shapes; malformed frames remain `WORKER_PROTOCOL_VIOLATION`. The protocol/tooling tests live in `src/services/infra/workerProtocol.test.ts`, the pure harness in `src/workers/crawler/__tests__/blueprintCapture.test.ts`, and the real-Chromium E2E in `src/workers/crawler/__tests__/blueprintCapture.e2e.test.ts`.
+
+---
+
+## 8. Security
 
 - The worker is spawned by the sandboxed Rust commands (`process_spawn`) with an **array** of arguments and **no shell**.
 - The executable must be on the Rust allowlist (`node` / `node.exe`).
