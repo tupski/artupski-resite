@@ -279,6 +279,31 @@ an isolated temp directory and runs the generated project's **own** `npm install
 to preserve the generated directory. If npm cannot run in the environment, the suite reports BLOCKED
 (skipped) rather than a false PASS.
 
+### 5.11 Phase 13 visual verification test tier
+
+The Phase 13 diff engine is verified through the pure core, the codec, the orchestrating service, and
+the UI — all deterministic and free of a real browser or network:
+
+- `src/services/diff/__tests__/visualDiff.test.ts` — the pure core: exact mismatch counts and
+  similarity for known images, threshold noise rejection, layout-shift classification, size-mismatch
+  error vs padded comparison, diff-image colours, and invalid-input handling.
+- `src/services/diff/__tests__/png.test.ts` — encode/decode round-trip byte-for-byte, a valid PNG
+  signature/IHDR, alpha preservation, and rejection of empty/non-PNG/truncated/invalid images.
+- `src/services/diff/__tests__/diffService.test.ts` — the happy path (matching images, with the diff
+  PNG decoded back as a real artifact check), partial runs (missing original / unavailable generated
+  capture), server- and browser-launch failures (with no leaked server), empty-input rejection, and
+  abort (collaborators stopped).
+- `src/services/diff/__tests__/diffPaths.test.ts` — root confinement for the generated server
+  (traversal, encoded traversal, NUL, backslash, empty root), the `dist/` root derivation, and the
+  managed server lifecycle.
+- `src/stores/diffStore.test.ts` — honest status derivation (`idle | ready | partial | error`).
+- `src/components/diff/DiffViewer.test.tsx` — empty/loading/error states, the score and discrepancy
+  list, partial marking, mode switching (pixel diff), and viewport selection.
+
+All Phase 13 tests build their own RGBA/PNG fixtures in-process; none require a browser, a server, or
+network access. The Phase 12 generator suite (including its opt-in build E2E) and the Phase 8
+`serverPathPolicy` suite are re-run unchanged as regression coverage.
+
 **Responsive capture (Phase 7, as built)**: `src/services/scanner/responsiveScanner.test.ts` covers profile selection, path sanitisation, and orchestration (including the honest skip-on-failure path). `src/services/storage/__tests__/responsiveCaptures.test.ts` covers the migration + repository (one-per-page/profile, cascade, reopen). `src/services/infra/workerProtocol.test.ts` validates the `captureViewport` wire shape (including the profile bounds). The opt-in `src/workers/crawler/__tests__/responsiveCapture.e2e.test.ts` renders the responsive fixture at desktop AND mobile and asserts the captures are distinct (different screenshot bytes; `nav` visible on desktop, hidden on mobile) with detected media-query breakpoints.
 
 Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):

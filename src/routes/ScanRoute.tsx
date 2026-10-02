@@ -10,6 +10,7 @@ import { TechnologyPanel } from '../components/scan/TechnologyPanel';
 import { ViewportPreview } from '../components/scan/ViewportPreview';
 import { ClonePanel } from '../components/clone/ClonePanel';
 import { BlueprintPanel } from '../components/blueprint/BlueprintPanel';
+import { DiffViewer } from '../components/diff/DiffViewer';
 import { AuthCapturePanel } from '../components/auth/AuthCapturePanel';
 import { SCAN_STATUS_LABEL, type ScanStatus } from '../types/scan';
 import { useScanStore } from '../stores/scanStore';
@@ -19,7 +20,9 @@ import { useAuthStore } from '../stores/authStore';
 import { useResponsiveStore } from '../stores/responsiveStore';
 import { useCloneStore } from '../stores/cloneStore';
 import { useBlueprintStore } from '../stores/blueprintStore';
+import { useDiffStore } from '../stores/diffStore';
 import { runClone, isCloneAvailable } from '../services/clone/runClone';
+import { runVisualDiff } from '../services/diff';
 import { validateTargetUrl } from '../lib/url';
 import { cn } from '../lib/cn';
 
@@ -97,6 +100,19 @@ export function ScanRoute() {
   const closeClonePreview = useCloneStore((state) => state.closePreview);
   const clearClone = useCloneStore((state) => state.clear);
   const [cloneGenerating, setCloneGenerating] = useState(false);
+
+  const diffStatus = useDiffStore((state) => state.status);
+  const diffReport = useDiffStore((state) => state.report);
+  const diffError = useDiffStore((state) => state.error);
+  const diffActiveProfile = useDiffStore((state) => state.activeProfile);
+  const beginDiff = useDiffStore((state) => state.begin);
+  const setDiffReport = useDiffStore((state) => state.setReport);
+  const setDiffError = useDiffStore((state) => state.setError);
+  const setDiffActiveProfile = useDiffStore((state) => state.setActiveProfile);
+  const [diffGenerating, setDiffGenerating] = useState(false);
+  // Phase 12 exposes no persisted project path, so the caller supplies the
+  // generated project root explicitly; it is never guessed.
+  const [diffProjectRoot, setDiffProjectRoot] = useState('');
   const cloneAvailable = isCloneAvailable();
 
   const blueprintStatus = useBlueprintStore((state) => state.status);
@@ -269,6 +285,45 @@ export function ScanRoute() {
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
+  }
+
+  // Run the Phase 13 visual comparison: screenshot the generated project's
+  // built output and diff it against the original captured page(s). The
+  // generated project root is caller-supplied (Phase 12 has no UI/persistence),
+  // so nothing is guessed. The diff store owns the honest lifecycle; a setup
+  // failure is surfaced through its error channel.
+  async function handleRunDiff() {
+    if (!scanId) {
+      return;
+    }
+    beginDiff();
+    setDiffGenerating(true);
+    try {
+      const routeTargets = (blueprintDocument?.routes ?? []).map((route) => ({ path: route.path }));
+      const profiles = Array.from(new Set(viewportCaptures.map((capture) => capture.profile)));
+      const originals = Object.fromEntries(
+        viewportCaptures.map((capture) => [
+          capture.profile,
+          {
+            profile: capture.profile,
+            screenshotPath: capture.screenshotPath,
+            width: capture.width,
+            height: capture.height
+          }
+        ])
+      );
+      const report = await runVisualDiff(diffProjectRoot.trim(), {
+        routes: routeTargets.length > 0 ? routeTargets : [{ path: '/' }],
+        profiles: profiles.length > 0 ? profiles : ['desktop'],
+        originals
+      });
+      setDiffReport(report);
+      if (!report.ok && report.error) {
+        setDiffError(report.error);
+      }
+    } finally {
+      setDiffGenerating(false);
+    }
   }
 
   // Keep the auth panel in sync with the selected project's persisted session
@@ -709,6 +764,62 @@ export function ScanRoute() {
               onOpenPreview={() => void openClonePreview()}
               onClosePreview={() => void closeClonePreview()}
             />
+          </Panel>
+        ) : null}
+
+        {scanId ? (
+          <Panel
+            title="Visual comparison"
+            actions={
+              diffReport ? (
+                <Badge
+                  tone={
+                    !diffReport.ok
+                      ? 'danger'
+                      : diffReport.summary.partial
+                        ? 'warning'
+                        : 'success'
+                  }
+                >
+                  {diffReport.ok
+                    ? `${diffReport.summary.averageSimilarityPercent.toFixed(2)}%`
+                    : 'Failed'}
+                </Badge>
+              ) : undefined
+            }
+          >
+            <div className="flex flex-col gap-3">
+              <Input
+                label="Generated project root"
+                value={diffProjectRoot}
+                placeholder="Absolute path to the generated Vite project (contains dist/)"
+                hint="The built output under dist/ is served on loopback and screenshotted."
+                spellCheck={false}
+                onChange={(event) => setDiffProjectRoot(event.target.value)}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  disabled={diffGenerating || !cloneAvailable || diffProjectRoot.trim().length === 0}
+                  onClick={() => void handleRunDiff()}
+                >
+                  {diffGenerating ? 'Comparing…' : 'Run comparison'}
+                </Button>
+                <span className="text-caption text-text-muted">
+                  {!cloneAvailable
+                    ? 'Available in the desktop shell only.'
+                    : 'Screenshots the generated project and compares it with the original capture.'}
+                </span>
+              </div>
+              <DiffViewer
+                report={diffReport}
+                loading={diffStatus === 'running'}
+                error={diffError ? diffError.message : null}
+                activeProfile={diffActiveProfile}
+                onSelectProfile={setDiffActiveProfile}
+              />
+            </div>
           </Panel>
         ) : null}
 

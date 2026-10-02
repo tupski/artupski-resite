@@ -95,6 +95,24 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
   normalizes emitted TSX via `jsxCleanliness`) and no `build_tmp` directory rename — instead every
   generated file is validated up front and written atomically per file within the root.
 
+### 3.4b Visual Verification & Diff Engine
+- Compares an original captured website against the generated project's rendering.
+- **As built (Phase 13)**: `src/services/diff/` provides a **pure, dependency-free** pixel core
+  (`visualDiff.ts`, `computeVisualDiff` over two RGBA buffers) and a self-contained PNG codec
+  (`png.ts`); `diffService.ts` (`runVisualDiff`) starts the generated project's built `dist/` output
+  on a **loopback-only** managed server (`generatedServer.ts`, reusing the Phase 8 clone preview
+  server + shared `serverPathPolicy` root confinement), captures each route at matching viewports
+  through the Phase 3 browser worker (`captureViewport`), and reads the Phase 7 original capture via
+  the new READ-only Rust `asset_read` command. Types live in `src/types/visualDiff.ts`.
+- **UI seam**: `src/stores/diffStore.ts` mirrors the report with honest
+  `idle | running | ready | partial | error` states; `src/components/diff/DiffViewer.tsx` (wired into
+  `ScanRoute`) renders side-by-side, slider-overlay, and colour-coded diff modes with a mismatch/score
+  header and a discrepancy inspector. The React UI never imports the engine internals.
+- **Events**: a bounded `diff.*` domain (`started`, `captured`, `computed`, `completed`, `failed`)
+  carrying viewport names, counts, and a similarity percentage only — never image bytes or text.
+  `WORKER_PROTOCOL_VERSION` stays `1`; no new worker.
+- **Deferred**: doc/ZIP export (Phase 14), OS-keychain credential storage (Phase 15).
+
 ### 3.5 Local Storage Subsystem
 - SQLite embedded database.
 - Stores project metadata, scan runs, captured assets, blueprints, settings, and logs.

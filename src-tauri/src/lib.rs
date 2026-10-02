@@ -65,6 +65,7 @@ pub fn run() {
             storage::storage_read_database,
             storage::storage_write_database,
             asset::asset_write,
+            asset::asset_read,
             asset::asset_delete,
             clone::clone_root,
             clone::clone_write,

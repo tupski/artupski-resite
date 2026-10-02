@@ -8,6 +8,7 @@ export {
   processKill,
   processStatus,
   assetWrite,
+  assetRead,
   assetDelete,
   cloneRoot,
   cloneWrite,

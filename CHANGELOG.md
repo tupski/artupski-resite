@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 13 - Visual verification & diff engine
+
+Compares an original captured website against the generated project's rendering: it launches the
+generated project's built output on a loopback-only managed server, screenshots it at the same
+viewports as the Phase 7 captures, and computes a pixel diff image plus a similarity score. It is a
+**service-layer + UI** increment with a **dependency-free** diff core: **no new worker, no new
+runtime dependency**, and `WORKER_PROTOCOL_VERSION` stays `1`.
+
+- **Pure diff core**: `src/services/diff/visualDiff.ts` exposes `computeVisualDiff(original,
+  comparison, options)` over two RGBA buffers. It returns an exact mismatched-pixel count, a
+  similarity percentage, a colour-coded (magenta/red) diff image, and bounded discrepancies. A size
+  mismatch is an error unless `allowSizeMismatch` pads to a common canvas (and then the difference is
+  reported, never hidden). A wide contiguous mismatch is surfaced as a `layout_shift`; otherwise the
+  discrepancy is a generic `pixel_mismatch`.
+- **Dependency-free PNG codec**: `src/services/diff/png.ts` decodes/encodes 8-bit non-interlaced
+  RGB/RGBA PNGs with a self-contained DEFLATE inflate (stored/fixed/dynamic Huffman) and a
+  stored-block zlib encode, so it runs identically in the Tauri webview, Node, and jsdom. The
+  roadmap's "Pixelmatch" reference is an example; no `pngjs`/`pixelmatch` dependency is added.
+- **Service**: `src/services/diff/diffService.ts` exposes `runVisualDiff(projectRoot, request, deps)`.
+  It starts the generated project's `dist/` output on a loopback-only managed server, captures each
+  route at the requested viewports through the Phase 3 browser worker (`captureViewport`), reads the
+  matching Phase 7 original capture, and returns an honest `VisualDiffReport`. All collaborators are
+  injectable; the service never throws past its boundary, and a single viewport failing sets
+  `partial` rather than failing the run.
+- **Server reuse**: `src/services/diff/generatedServer.ts` reuses the Phase 8 clone preview server
+  (loopback + root confinement via the shared `serverPathPolicy`) to serve the generated `dist/`
+  tree; no install or framework dev server is needed at diff time.
+- **Native boundary**: `src-tauri/src/asset.rs` adds a READ-only `asset_read` command (same
+  validation and containment as `asset_write`) so the diff engine can read the original screenshot
+  from the sandboxed `assets/` root; the TS wrapper is `assetRead` in `src/services/ipc/commands.ts`.
+- **Events**: a bounded `diff.*` domain (`started`, `captured`, `computed`, `completed`, `failed`)
+  carries viewport names, counts, and a similarity percentage only - never image bytes or page text.
+- **UI**: `src/components/diff/DiffViewer.tsx` (backed by `src/stores/diffStore.ts`, wired into
+  `ScanRoute`) renders side-by-side, slider-overlay, and colour-coded diff modes with a mismatch/score
+  header and a discrepancy inspector, plus honest `idle | running | ready | partial | error` states.
+  The generated project root is caller-supplied (Phase 12 added no UI/persistence), so nothing is
+  guessed. Reuses the existing `Panel`/`Badge`/`Button`/`EmptyState` primitives.
+- **Tests**: `src/services/diff/__tests__/` (visualDiff core, PNG codec, service, paths/server),
+  `src/stores/diffStore.test.ts`, and `src/components/diff/DiffViewer.test.tsx` - **51 new tests**
+  covering happy paths, invalid input, boundary conditions, failure isolation, abort, and
+  security-sensitive path/traversal cases. Full suite: **865 passed / 24 skipped**.
+- **Deviations** (see `docs/impl-plan/phase-13-impl-plan.md` §17): no `pixelmatch`/`pngjs`
+  dependency; the Phase 8 server worker is reused; original images come from the Phase 7 persisted
+  captures rather than a fresh live capture. **Deferred**: doc/ZIP export (Phase 14).
+
 ### Phase 12 - Full-stack project generator (Vite + React + TS + Tailwind)
 
 Assembles a complete, runnable, **standalone** Vite + React 18 + TypeScript 5 + Tailwind 3 project

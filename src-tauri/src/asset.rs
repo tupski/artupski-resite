@@ -118,6 +118,31 @@ pub fn asset_write(app: AppHandle, relative: String, data: Vec<u8>) -> Result<St
     Ok(safe_relative.to_string_lossy().into_owned())
 }
 
+/// Read `<assets>/<relative>` and return its raw bytes.
+///
+/// Phase 13 (visual verification) must decode the original responsive capture
+/// PNG that Phase 7 wrote under the assets sandbox. This is a READ-only command
+/// and enforces exactly the same validation and containment rules as
+/// `asset_write`: the relative path is rejected when absolute or containing
+/// `..`, and the resolved target is re-verified inside the canonical assets root.
+#[tauri::command]
+pub fn asset_read(app: AppHandle, relative: String) -> Result<Vec<u8>, String> {
+    let safe_relative = validate_relative(&relative)?;
+    let root = resolve_assets_root(&app)?;
+    let target = root.join(&safe_relative);
+    if !target.starts_with(&root) {
+        return Err("Refusing to read outside the assets directory.".to_string());
+    }
+    let canonical_target = target
+        .canonicalize()
+        .map_err(|error| format!("Unable to resolve the asset file: {error}"))?;
+    if !canonical_target.starts_with(&root) {
+        return Err("Refusing to read outside the assets directory.".to_string());
+    }
+    fs::read(&canonical_target)
+        .map_err(|error| format!("Unable to read the asset file: {error}"))
+}
+
 /// Delete `<assets>/<relative>` when it exists. Missing files are not an error.
 #[tauri::command]
 pub fn asset_delete(app: AppHandle, relative: String) -> Result<(), String> {

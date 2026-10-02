@@ -189,6 +189,23 @@ export function assetWrite(relative: string, data: Uint8Array): Promise<IpcResul
   );
 }
 
+/**
+ * Read a previously written asset (e.g. a Phase 7 responsive screenshot) from the
+ * sandboxed `assets/` root. `relative` is a caller-supplied RELATIVE path; the
+ * Rust `asset_read` command rejects absolute paths and any `..` component and
+ * re-verifies containment in the canonical assets root.
+ */
+export function assetRead(relative: string): Promise<IpcResult<number[]>> {
+  return safeInvoke<number[]>(
+    'asset_read',
+    { relative },
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to read the asset file.'
+    }
+  );
+}
+
 /** Delete a previously written asset. A missing file is treated as success. */
 export function assetDelete(relative: string): Promise<IpcResult<void>> {
   return safeInvoke<void>(

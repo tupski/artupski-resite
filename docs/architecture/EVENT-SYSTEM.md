@@ -37,6 +37,9 @@ Standardized event key structure: `<domain>.<action_or_state>`.
   `project.file_generated` (POSIX-relative `path` + `bytes`), and `project.completed`
   (file/byte totals + `partial`). Payloads carry paths, counts, and byte sizes only — **never** file
   contents. Package installation/build is not run by the app; it is the generated project's own step.
+- `diff.*`: Visual verification lifecycle (`diff.started`, `diff.captured`, `diff.computed`,
+  `diff.completed`, `diff.failed`). Phase 13 payloads carry viewport names, pixel counts, and a
+  similarity percentage only — **never** screenshot bytes, decoded pixels, or page text.
 - `storage.*`: Local database initialization, migration lifecycle, readiness.
 - `process.*`: Child-process lifecycle (spawn/ready/busy/stopping/stopped/exited/failed).
 - `browser.*`: Browser runtime detection and controlled session lifecycle.

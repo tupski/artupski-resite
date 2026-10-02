@@ -449,6 +449,7 @@ and re-exports from `src/services/generator/index.ts`. Types live in `src/types/
 ---
 
 ## Phase 13: Visual Verification & Diff Engine
+- **Status**: COMPLETE (see the Phase 13 implementation note below).
 - **Goal**: Compare original captured website against generated project rendering.
 - **Scope**: Dual-preview side-by-side view, pixel-diff calculation (Pixelmatch/Playwright screenshot diff).
 - **Dependencies**: Phase 8, Phase 12.
@@ -461,6 +462,45 @@ and re-exports from `src/services/generator/index.ts`. Types live in `src/types/
 - **Acceptance Criteria**: Display side-by-side visual comparison with overlay diff slider and mismatch score.
 - **Potential Risks**: Dynamic content (dates, carousels, animations) triggering false-positive diffs.
 - **Verification**: Run diff comparison; view color-coded overlay highlighting layout variations.
+
+### Phase 13 Implementation Notes (as built)
+The following decisions were made during implementation and supersede the pre-implementation wording above where they conflict. Full detail: `docs/impl-plan/phase-13-impl-plan.md`.
+
+1. **Pure, dependency-free diff core** (`src/services/diff/visualDiff.ts`): a synchronous
+   `computeVisualDiff(original, comparison, options)` over two RGBA buffers returns an exact
+   mismatch count, a similarity percentage, a colour-coded (magenta/red) diff image, and bounded
+   discrepancies. Size mismatches are an error unless `allowSizeMismatch` pads to a common canvas
+   (and then the size difference is reported, never hidden).
+2. **Dependency-free PNG codec** (`src/services/diff/png.ts`): 8-bit non-interlaced RGB/RGBA
+   decode + encode with a self-contained DEFLATE inflate (stored/fixed/dynamic Huffman) and a
+   stored-block zlib encode. Rationale: the roadmap named "Pixelmatch" as an *example*; no new
+   runtime dependency is added (see impl plan §17).
+3. **Service** (`src/services/diff/diffService.ts`): `runVisualDiff(projectRoot, request, deps)`
+   starts the generated project's built output (`dist/`) on a loopback-only managed server,
+   captures each generated route at the requested viewports through the Phase 3 browser worker
+   (`captureViewport`), decodes the Phase 7 original capture (read via the new sandboxed
+   `asset_read` Rust command), and returns an honest `VisualDiffReport`. One viewport failing sets
+   `partial` and never fails the run; it never throws past its boundary.
+4. **Server reuse** (`src/services/diff/generatedServer.ts`): the Phase 8 clone preview server
+   (loopback + root confinement via the shared `serverPathPolicy`) is reused rather than
+   duplicated; the generated root is served as static `dist/` output (no install, no framework
+   dev server at diff time).
+5. **Events**: a bounded `diff.*` domain (`started`, `captured`, `computed`, `completed`, `failed`)
+   carrying viewport names, counts, and a similarity percentage only - never image bytes or text.
+   `WORKER_PROTOCOL_VERSION` stays `1`; no new worker.
+6. **UI** (`src/components/diff/DiffViewer.tsx`, `src/stores/diffStore.ts`, wired into
+   `ScanRoute`): side-by-side, slider overlay, and colour-coded diff modes with a mismatch/score
+   header and a discrepancy inspector; honest `idle | running | ready | partial | error` states.
+   The generated project root is caller-supplied (Phase 12 added no UI/persistence), so nothing is
+   guessed.
+- **Verification (executed in this phase)**: `typecheck`, `lint`, `test` (**865 passed / 24
+  skipped**, +51 new Phase 13 tests), `build`, `cargo check`, `cargo clippy --all-targets` - all
+  PASS. Phase 12 generator/limits/failure/path tests and the Phase 8 `serverPathPolicy` tests
+  remain green.
+- **Deferred**: doc/ZIP export (Phase 14), settings/security hardening UI + OS keychain (Phase 15).
+- **Recorded deviations** (see `docs/impl-plan/phase-13-impl-plan.md` §17): no `pixelmatch`/`pngjs`
+  runtime dependency (equivalent in-repo codec/compare); the Phase 8 server worker is reused; the
+  original images come from the Phase 7 persisted captures rather than a fresh live capture.
 
 ---
 

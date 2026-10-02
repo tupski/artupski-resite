@@ -18,6 +18,7 @@ export type EventDomain =
   | 'clone'
   | 'component'
   | 'project'
+  | 'diff'
   | 'ai'
   | 'storage'
   | 'process'
@@ -74,6 +75,11 @@ export type AppEventType =
   | 'project.started'
   | 'project.file_generated'
   | 'project.completed'
+  | 'diff.started'
+  | 'diff.captured'
+  | 'diff.computed'
+  | 'diff.completed'
+  | 'diff.failed'
   | 'ai.config_saved'
   | 'ai.connection_started'
   | 'ai.connection_verified'
@@ -561,6 +567,54 @@ export interface ProjectCompletedPayload extends BaseEventPayload {
   partial: boolean;
 }
 
+/**
+ * Visual diff lifecycle payloads (Phase 13). They carry viewport names, counts,
+ * and a similarity percentage only - NEVER screenshot bytes, decoded pixels, or
+ * page text.
+ */
+export interface DiffStartedPayload extends BaseEventPayload {
+  domain: 'diff';
+  /** Number of viewports the run intends to compare. */
+  viewports: number;
+  /** Number of generated routes being verified. */
+  routes: number;
+}
+
+export interface DiffCapturedPayload extends BaseEventPayload {
+  domain: 'diff';
+  /** Viewport profile name (e.g. `desktop`). */
+  profile: string;
+  /** True when the generated page render was captured successfully. */
+  generated: boolean;
+  /** True when the original captured screenshot was available. */
+  original: boolean;
+}
+
+export interface DiffComputedPayload extends BaseEventPayload {
+  domain: 'diff';
+  profile: string;
+  mismatchedPixels: number;
+  totalPixels: number;
+  similarityPercent: number;
+}
+
+export interface DiffCompletedPayload extends BaseEventPayload {
+  domain: 'diff';
+  viewports: number;
+  compared: number;
+  skipped: number;
+  /** Mean similarity across compared viewports (0-100). */
+  averageSimilarityPercent: number;
+  /** True when any viewport was skipped or had a dimension mismatch. */
+  partial: boolean;
+}
+
+export interface DiffFailedPayload extends BaseEventPayload {
+  domain: 'diff';
+  code: string;
+  message: string;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
@@ -629,6 +683,11 @@ export interface AppEventPayloadMap {
   'project.started': ProjectStartedPayload;
   'project.file_generated': ProjectFileGeneratedPayload;
   'project.completed': ProjectCompletedPayload;
+  'diff.started': DiffStartedPayload;
+  'diff.captured': DiffCapturedPayload;
+  'diff.computed': DiffComputedPayload;
+  'diff.completed': DiffCompletedPayload;
+  'diff.failed': DiffFailedPayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;
