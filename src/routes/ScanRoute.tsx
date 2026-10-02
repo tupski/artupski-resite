@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageShell } from '../components/layout/PageShell';
 import { Panel } from '../components/ui/Panel';
 import { Badge } from '../components/ui/Badge';
@@ -8,6 +8,7 @@ import { StatusIndicator, type StatusTone } from '../components/ui/StatusIndicat
 import { IconAlert } from '../components/ui/icons';
 import { TechnologyPanel } from '../components/scan/TechnologyPanel';
 import { ViewportPreview } from '../components/scan/ViewportPreview';
+import { ClonePanel } from '../components/clone/ClonePanel';
 import { AuthCapturePanel } from '../components/auth/AuthCapturePanel';
 import { SCAN_STATUS_LABEL, type ScanStatus } from '../types/scan';
 import { useScanStore } from '../stores/scanStore';
@@ -15,6 +16,8 @@ import { useProjectsStore } from '../stores/projectsStore';
 import { useTechnologyStore } from '../stores/technologyStore';
 import { useAuthStore } from '../stores/authStore';
 import { useResponsiveStore } from '../stores/responsiveStore';
+import { useCloneStore } from '../stores/cloneStore';
+import { runClone, isCloneAvailable } from '../services/clone/runClone';
 import { validateTargetUrl } from '../lib/url';
 import { cn } from '../lib/cn';
 
@@ -78,6 +81,21 @@ export function ScanRoute() {
   const viewportError = useResponsiveStore((state) => state.error);
   const loadViewportCaptures = useResponsiveStore((state) => state.loadForScan);
   const clearViewportCaptures = useResponsiveStore((state) => state.clear);
+
+  const cloneAssets = useCloneStore((state) => state.assets);
+  const cloneLoading = useCloneStore((state) => state.loading);
+  const cloneError = useCloneStore((state) => state.error);
+  const cloneReport = useCloneStore((state) => state.lastReport);
+  const clonePreviewUrl = useCloneStore((state) => state.previewUrl);
+  const clonePreviewBusy = useCloneStore((state) => state.previewBusy);
+  const loadCloneAssets = useCloneStore((state) => state.loadForScan);
+  const setCloneReport = useCloneStore((state) => state.setReport);
+  const setCloneError = useCloneStore((state) => state.setError);
+  const openClonePreview = useCloneStore((state) => state.openPreview);
+  const closeClonePreview = useCloneStore((state) => state.closePreview);
+  const clearClone = useCloneStore((state) => state.clear);
+  const [cloneGenerating, setCloneGenerating] = useState(false);
+  const cloneAvailable = isCloneAvailable();
 
   const authMode = useAuthStore((state) => state.mode);
   const authSession = useAuthStore((state) => state.session);
@@ -158,6 +176,40 @@ export function ScanRoute() {
     }
     void loadViewportCaptures(scanId);
   }, [scanId, status, loadViewportCaptures, clearViewportCaptures]);
+
+  // Load persisted clone assets when a scan id appears (DB is source of truth).
+  useEffect(() => {
+    if (!scanId) {
+      clearClone();
+      return;
+    }
+    void loadCloneAssets(scanId);
+  }, [scanId, loadCloneAssets, clearClone]);
+
+  async function handleGenerateClone() {
+    if (!scanId || !validation.valid) {
+      return;
+    }
+    setCloneGenerating(true);
+    try {
+      const result = await runClone({
+        scanId,
+        projectId: projectId ?? '',
+        seedUrl: validation.url
+      });
+      if (!result.ok) {
+        // Surface the structured error through the store's error channel.
+        setCloneError(result.error);
+        setCloneReport(null);
+      } else {
+        setCloneError(null);
+        setCloneReport(result.data.report);
+        await loadCloneAssets(scanId);
+      }
+    } finally {
+      setCloneGenerating(false);
+    }
+  }
 
   // Keep the auth panel in sync with the selected project's persisted session
   // (the database is the source of truth; never a hardcoded "ready").
@@ -570,6 +622,32 @@ export function ScanRoute() {
               captures={viewportCaptures}
               loading={viewportLoading}
               error={viewportError}
+            />
+          </Panel>
+        ) : null}
+
+        {scanId ? (
+          <Panel
+            title="Static clone"
+            actions={
+              cloneAssets.length > 0 ? (
+                <Badge tone="neutral">{cloneAssets.length}</Badge>
+              ) : undefined
+            }
+          >
+            <ClonePanel
+              assets={cloneAssets}
+              loading={cloneLoading}
+              error={cloneError}
+              report={cloneReport}
+              previewUrl={clonePreviewUrl}
+              previewBusy={clonePreviewBusy}
+              canGenerate={status === 'completed'}
+              generating={cloneGenerating}
+              notReady={!cloneAvailable}
+              onGenerate={() => void handleGenerateClone()}
+              onOpenPreview={() => void openClonePreview()}
+              onClosePreview={() => void closeClonePreview()}
             />
           </Panel>
         ) : null}

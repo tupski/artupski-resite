@@ -9,6 +9,10 @@ export {
   processStatus,
   assetWrite,
   assetDelete,
+  cloneRoot,
+  cloneWrite,
+  cloneRead,
+  cloneDelete,
   onProcessEvent
 } from './commands';
 export type {

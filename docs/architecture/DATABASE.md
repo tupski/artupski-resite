@@ -86,6 +86,18 @@ The responsive phase adds one **forward-only** migration; `001`–`005` are neve
 - **Screenshot storage**: PNGs are written through the sandboxed Rust `asset_write` command under `<app_local_data_dir>/assets/responsive/<scanId>/`; only the relative path is persisted. This keeps the database small (the DB file is exported as a single WASM buffer).
 - **Repository**: `ResponsiveCaptureRepository` (`src/services/storage/repositories/responsiveCaptureRepository.ts`) owns all SQL for the table - `upsert` (one row per page+profile), `listByScan`, `listByPage`, `countByScan`, `deleteByScan`. JSON columns are parsed defensively (a malformed value yields an empty list, never a throw).
 
+### 2.6 Static Clone Assets Implementation Note (as built, Phase 8)
+
+The static clone phase adds one **forward-only** migration; `001`-`006` are never edited. It also fixes the **Phase 4/7 critical gap**: those phases persisted only page metadata/structure, so the clone engine had no raw HTML or asset bytes to work from.
+
+- **Migration `007_scan_assets.ts` (version `7`)** creates `scan_assets` (matching the section-3 sketch) and adds a nullable `raw_html_path` column to `scan_pages`:
+  - Columns: `id`, `scan_id` (`REFERENCES scans(id) ON DELETE CASCADE`), `page_id` (`REFERENCES scan_pages(id) ON DELETE SET NULL`), `page_url` (additive: the page an asset was discovered on), `source_url`, `local_path` (the path inside the sandboxed clone tree, NOT the DB), `mime_type`, `size_bytes`, `sha256`, `asset_type` (`CHECK IN ('image','stylesheet','script','font','video','audio','document','other')`), `created_at`.
+  - **Indexes**: a **UNIQUE** `idx_scan_assets_scan_sha (scan_id, sha256)` so identical payloads de-duplicate to one physical file (section 6 retention rule), plus `idx_scan_assets_scan_id`, `idx_scan_assets_page_id`, `idx_scan_assets_sha256`, `idx_scan_assets_asset_type`.
+  - **Additive column** `scan_pages.raw_html_path TEXT` (`ALTER TABLE ... ADD COLUMN`, nullable) records where a page's captured raw HTML lives on disk. Legacy rows and non-clone scans are unaffected.
+- **Asset storage**: bytes are written through the sandboxed Rust `clone_write` command under `<app_local_data_dir>/clones/v1/`; only the relative path + bounded metadata are persisted. The database stays small (it is exported as one WASM buffer).
+- **Repository**: `AssetRepository` (`src/services/storage/repositories/assetRepository.ts`) owns all SQL for `scan_assets` - `upsertMany` (batched, one transaction + one persist; `(scan_id, sha256)` conflict target), `upsert`, `getById`, `listByScan`, `listByPage`, `countByScan`, `deleteByScan`.
+- **Cascade**: deleting a scan removes its assets; deleting a page nulls `page_id` (the asset survives, keyed by `page_url`).
+
 ---
 
 ## 3. Relational Schema & Table Definitions

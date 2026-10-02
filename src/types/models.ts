@@ -95,6 +95,12 @@ export interface ScanPage {
   /** Extraction timestamp (ISO-8601), distinct from the row `createdAt`. */
   capturedAt: string;
   createdAt: string;
+  /**
+   * On-disk path to the page's captured raw HTML (migration 007), or null when
+   * the page's HTML was never captured. The clone engine reads from here rather
+   * than reconstructing markup from metadata.
+   */
+  rawHtmlPath: string | null;
 }
 
 /** One matched signal persisted with a detection (Phase 5). */
@@ -136,6 +142,38 @@ export interface AppSetting {
   key: string;
   value: string;
   updatedAt: string;
+}
+
+/** Asset kinds persisted in `scan_assets` (migration 007). */
+export type CloneAssetType =
+  | 'image'
+  | 'stylesheet'
+  | 'script'
+  | 'font'
+  | 'video'
+  | 'audio'
+  | 'document'
+  | 'other';
+
+/**
+ * A downloaded clone asset (migration 007). Mirrors the `scan_assets` table:
+ * the source URL it was captured from, the local path inside the clone tree,
+ * its MIME type / byte size / SHA-256 (the de-duplication key), and the kind.
+ * The bytes themselves live on disk, never in SQLite.
+ */
+export interface CloneAsset {
+  id: string;
+  scanId: string;
+  pageId: string | null;
+  /** URL of the page the asset was discovered on (nullable for legacy rows). */
+  pageUrl: string | null;
+  sourceUrl: string;
+  localPath: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  assetType: CloneAssetType;
+  createdAt: string;
 }
 
 /** One anchor node's layout at a captured viewport (RESPONSIVE-SPEC section 2.1). */

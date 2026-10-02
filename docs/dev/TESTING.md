@@ -188,7 +188,22 @@ The default suite covers the UI seam **without any browser download**:
 
 - `src/stores/scanStore.test.ts` - the store lifecycle plus a full crawl run through `startScan()` against an injected fake browser runtime and a real in-memory SQLite database: it asserts the crawl's *real* counters (`pagesScanned`/`pagesDiscovered`), discovered URLs, completion status, and the honest runtime-unavailable failure state (no fabricated progress). `scanService` exposes `setScanRuntimeProviderForTests` / `resetScanServiceForTests` so the seam is testable without a Tauri shell.
 
-Port isolation for the five opt-in real-Chromium files: worker smoke `9099`, extraction E2E `4000`, orchestration E2E `8000`, interactive capture E2E `3001`, responsive capture E2E `5173`. They can be run together (`RUN_BROWSER_TESTS=1 npx vitest run src/workers/crawler`) without contending for a fixture port.
+Port isolation for the six opt-in real-Chromium files: worker smoke `9099`, extraction E2E `4000`, orchestration E2E `8000`, interactive capture E2E `3001`, responsive capture E2E `5173`, clone capture E2E `4173`. They can be run together (`RUN_BROWSER_TESTS=1 npx vitest run src/workers/crawler`) without contending for a fixture port.
+
+### 5.6 Phase 8 static clone test tier
+
+The default suite covers the Phase 8 clone engine **without any browser download**:
+
+- `src/services/clone/__tests__/clonePaths.test.ts` - traversal-safe route/asset path derivation, content-hashed asset names, depth-relative references.
+- `src/services/clone/__tests__/htmlRewriter.test.ts` - absolute/root-relative remap, `srcset`, internal anchors + hash fragments, external `target=_blank rel`, tracking-script stripping, `<base>` removal, mock-client injection, determinism.
+- `src/services/clone/__tests__/cssRewriter.test.ts` - `url(...)` remap and duplicate `@charset` collapse.
+- `src/services/clone/__tests__/serverPathPolicy.test.ts` - accept in-root; reject traversal (raw + percent-encoded), absolute-override, backslash, NUL, malformed encoding; content-type map.
+- `src/services/clone/__tests__/cloneService.test.ts` - full rewrite+write+manifest over a fake worker + in-memory IO, and the honest **skip** path when a page's HTML cannot be captured.
+- `src/services/storage/__tests__/scanAssets.test.ts` - migration 007 registration/table/indexes + `raw_html_path` column, `AssetRepository` CRUD, `(scan_id, sha256)` de-dupe, scan-delete cascade, reopen persistence.
+- `src/stores/cloneStore.test.ts` - honest loading/empty/error states from persisted rows.
+- `src/services/infra/workerProtocol.test.ts` - validation of `captureAssets`, `serveClone`/`stopClone`, and the `extract` `rawHtml` field.
+
+The **opt-in** `src/workers/crawler/__tests__/cloneCapture.e2e.test.ts` (gate `RUN_BROWSER_TESTS=1`) launches real Chromium against the clone fixture (`127.0.0.1:4173`), captures the bounded raw HTML and the referenced assets, runs the pure rewriter, and asserts the result is self-contained (no `googletagmanager.com`, `js/mock-client.js` injected, local asset paths present).
 
 **Responsive capture (Phase 7, as built)**: `src/services/scanner/responsiveScanner.test.ts` covers profile selection, path sanitisation, and orchestration (including the honest skip-on-failure path). `src/services/storage/__tests__/responsiveCaptures.test.ts` covers the migration + repository (one-per-page/profile, cascade, reopen). `src/services/infra/workerProtocol.test.ts` validates the `captureViewport` wire shape (including the profile bounds). The opt-in `src/workers/crawler/__tests__/responsiveCapture.e2e.test.ts` renders the responsive fixture at desktop AND mobile and asserts the captures are distinct (different screenshot bytes; `nav` visible on desktop, hidden on mobile) with detected media-query breakpoints.
 

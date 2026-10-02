@@ -240,6 +240,7 @@ Delivered on top of the Phase 4 crawler; no new process manager, browser runtime
 ---
 
 ## Phase 8: Static Clone Engine & Local Asset Server
+- **Status**: COMPLETE (see the Phase 8 implementation notes below).
 - **Goal**: Generate downloadable 1:1 offline static clone of scanned website.
 - **Scope**: Asset downloader, relative URL rewriter, local static file server.
 - **Dependencies**: Phase 4, Phase 7.
@@ -252,6 +253,18 @@ Delivered on top of the Phase 4 crawler; no new process manager, browser runtime
 - **Acceptance Criteria**: Cloned website renders locally without 404s or external network dependencies.
 - **Potential Risks**: Dynamic JavaScript fetching absolute remote endpoints at runtime.
 - **Verification**: Disconnect internet, load local clone preview, verify layout and styling intact.
+
+### Phase 8 Implementation Notes (as built)
+
+Delivered on top of the Phase 4 crawler and Phase 7 responsive analysis; **no new process manager or browser runtime was created**, and the worker protocol was extended additively (`WORKER_PROTOCOL_VERSION` stays `1`). The full pre-implementation plan (files, migration, protocol, tests, risks, and the C3-C7 decision resolutions) is `docs/impl-plan/phase-8-impl-plan.md`.
+
+1. **CRITICAL-GAP fix first (Phase 4/7 never persisted raw HTML or asset bytes)**: `extract` gains a bounded `captureHtml` option, and a new `captureAssets` command fetches a page's referenced assets (stylesheet/script/image/media) with the shared URL policy applied to **every** asset URL. `scan_pages` gains a nullable `raw_html_path` column; asset bytes are written to disk, only metadata + the relative path are persisted.
+2. **Persistence**: forward-only migration `007_scan_assets` (version 7) creates `scan_assets` (with a UNIQUE `(scan_id, sha256)` de-dupe index and a `page_url` field) and `AssetRepository` owns all its SQL. See `DATABASE.md` section 2.6.
+3. **Engine**: `src/services/clone/` - pure `clonePaths` / `htmlRewriter` / `cssRewriter` / `mockClient` / `manifest` modules (CLONE-SPEC sections 2-5) and the `cloneService` orchestrator. A page whose HTML cannot be captured is **skipped and counted**, never fabricated. **Documented deviation**: the spec's rewriter pseudocode imports `htmlparser2`/`dom-serializer`/`css-select`; those are not project dependencies, so a small bounded dependency-free rewriter is used instead (no new supply-chain dependency).
+4. **Native boundary + local server**: `src-tauri/src/clone.rs` (confined to `<app_local_data_dir>/clones`) writes the clone tree at `<clones>/v1/`; `src/workers/cloneServer/` is a `ProcessManager`-managed Node child that serves the tree loopback-only with strict path confinement, opened in the system browser (no CSP widening).
+5. **UI**: a `ClonePanel` on the Scan route (backed by `src/stores/cloneStore.ts`) offers "Generate static clone" + a local preview, with honest loading/empty/error/partial states; a partial run lists skipped pages/assets and never presents them as cloned.
+6. **Open decisions (C3-C7)**: resolved in `docs/impl-plan/phase-8-impl-plan.md` section 10 - **C3** Phase 8 owns `scan_assets` (DATABASE.md); **C4** output at `<project>/clones/v1/` per CLONE-SPEC section 6 (spec over architecture doc); **C5** loopback-only, root-confined preview server as a managed process; **C6** ZIP export / folder-explorer **deferred** (out of Phase 8 scope, no `zip` dependency); **C7** Phase 7-style store seam + honest UI.
+7. **Deferred / out of scope**: ZIP archiving + native folder-explorer trigger (CLONE-SPEC section 6.2-6.3); full CSS bundling/minification; the **Tailwind responsive-rule synthesis** (deferred Phase 7 work, explicitly NOT part of Phase 8).
 
 ---
 

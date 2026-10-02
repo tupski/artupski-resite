@@ -292,3 +292,125 @@ describe('workerProtocol framing', () => {
     expect(() => serializeMessage(oversized)).toThrowError(/exceeds/i);
   });
 });
+
+describe('workerProtocol clone extensions (Phase 8)', () => {
+  it('accepts a well-formed captureAssets command', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'a',
+        type: 'command',
+        payload: { command: 'captureAssets', sessionId: 's1', url: 'http://x/', timeoutMs: 1000 }
+      })
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a captureAssets command with a bad cap', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'a',
+        type: 'command',
+        payload: {
+          command: 'captureAssets',
+          sessionId: 's1',
+          url: 'http://x/',
+          timeoutMs: 1000,
+          maxAssets: 'many'
+        }
+      })
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('accepts serveClone and stopClone commands', () => {
+    expect(
+      parseMessage(
+        JSON.stringify({
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          id: 'a',
+          type: 'command',
+          payload: { command: 'serveClone', root: '/tmp/clones' }
+        })
+      ).ok
+    ).toBe(true);
+    expect(
+      parseMessage(
+        JSON.stringify({
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          id: 'b',
+          type: 'command',
+          payload: { command: 'stopClone' }
+        })
+      ).ok
+    ).toBe(true);
+  });
+
+  it('validates a captureAssets result with bounded assets', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'a',
+        type: 'result',
+        payload: {
+          command: 'captureAssets',
+          sessionId: 's1',
+          url: 'http://x/',
+          finalUrl: 'http://x/',
+          status: 200,
+          assets: [
+            {
+              sourceUrl: 'http://x/a.png',
+              mimeType: 'image/png',
+              assetType: 'image',
+              sizeBytes: 4,
+              sha256: 'abc',
+              base64: 'AAAA'
+            }
+          ],
+          skipped: 0,
+          truncated: false
+        }
+      })
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('validates an extract result carrying rawHtml', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'a',
+        type: 'result',
+        payload: {
+          command: 'extract',
+          sessionId: 's1',
+          page: {
+            requestedUrl: 'http://x/',
+            finalUrl: 'http://x/',
+            httpStatus: 200,
+            title: 'x',
+            metaDescription: null,
+            canonicalUrl: null,
+            robotsMeta: null,
+            headings: [],
+            internalLinks: [],
+            externalLinks: [],
+            images: [],
+            metrics: {},
+            status: 'completed',
+            errorCode: null,
+            errorMessage: null,
+            warnings: [],
+            capturedAt: '2026-01-01T00:00:00.000Z',
+            authStatus: 'none',
+            loginSignals: {}
+          },
+          rawHtml: { html: '<html></html>', byteLength: 13, truncated: false }
+        }
+      })
+    );
+    expect(result.ok).toBe(true);
+  });
+});

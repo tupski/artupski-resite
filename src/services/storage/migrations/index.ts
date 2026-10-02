@@ -24,6 +24,7 @@ import { MIGRATION_003_TECHNOLOGY_DETECTION } from './003_technology_detection';
 import { MIGRATION_004_AUTH_SESSIONS } from './004_auth_sessions';
 import { MIGRATION_005_SCAN_PAGE_AUTH } from './005_scan_page_auth';
 import { MIGRATION_006_RESPONSIVE_CAPTURES } from './006_responsive_captures';
+import { MIGRATION_007_SCAN_ASSETS } from './007_scan_assets';
 import type { AppliedMigration, Migration, MigrationResult } from './types';
 
 export type { AppliedMigration, Migration, MigrationResult } from './types';
@@ -38,7 +39,8 @@ export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_003_TECHNOLOGY_DETECTION,
   MIGRATION_004_AUTH_SESSIONS,
   MIGRATION_005_SCAN_PAGE_AUTH,
-  MIGRATION_006_RESPONSIVE_CAPTURES
+  MIGRATION_006_RESPONSIVE_CAPTURES,
+  MIGRATION_007_SCAN_ASSETS
 ];
 
 const CREATE_TRACKING_TABLE = `

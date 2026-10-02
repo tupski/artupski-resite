@@ -51,7 +51,10 @@ export type WorkerCommandName =
   | 'abort'
   | 'detectLogin'
   | 'captureState'
-  | 'captureViewport';
+  | 'captureViewport'
+  | 'captureAssets'
+  | 'serveClone'
+  | 'stopClone';
 
 /**
  * A per-domain storage state the host injects into a browser context.
@@ -107,6 +110,21 @@ export const MAX_VIEWPORT_DIMENSION = 4320;
  * so one pathological page cannot exhaust the stdio frame budget.
  */
 export const MAX_SCREENSHOT_BASE64_BYTES = 12 * 1024 * 1024;
+
+/**
+ * Upper bound for a captured raw HTML body (Phase 8 clone engine). The worker
+ * truncates (and flags) anything larger rather than sending an unbounded frame.
+ */
+export const MAX_RAW_HTML_BYTES = 4 * 1024 * 1024;
+
+/** Maximum number of assets a single `captureAssets` call may return. */
+export const MAX_ASSET_COUNT = 200;
+
+/**
+ * Upper bound for a single captured asset (8 MiB of decoded bytes). Assets that
+ * exceed this are dropped and counted in `skipped` - never silently substituted.
+ */
+export const MAX_ASSET_BYTES = 8 * 1024 * 1024;
 
 /** The standard responsive profiles (RESPONSIVE-SPEC section 1.1). Desktop first. */
 export const RESPONSIVE_VIEWPORT_PROFILES: readonly ViewportProfile[] = [
@@ -190,6 +208,11 @@ export interface ExtractCommandPayload {
   allowedContentTypes?: string[];
   /** Maximum redirects to follow. Defaults to and is capped at 5. */
   maxRedirects?: number;
+  /**
+   * When true the worker also returns the page's bounded raw HTML body (Phase 8
+   * clone). Defaults to false so Phase 4 callers receive an unchanged frame.
+   */
+  captureHtml?: boolean;
 }
 
 /** Cancel an in-flight extraction for a session. */
@@ -263,6 +286,42 @@ export interface CaptureViewportCommandPayload {
   profile: ViewportProfile;
 }
 
+/**
+ * Capture the referenced assets (stylesheet/script/image/font/media) of one page
+ * for the static clone engine (Phase 8). The worker navigates with the SAME URL
+ * policy enforcement as `extract`, enumerates asset URLs, applies the policy to
+ * every URL before requesting it, and returns bounded base64 payloads. Both
+ * bounds are optional and clamped by the worker.
+ */
+export interface CaptureAssetsCommandPayload {
+  command: 'captureAssets';
+  sessionId: string;
+  url: string;
+  /** Navigation timeout in ms. The worker clamps this to <= 30000. */
+  timeoutMs: number;
+  /** Max assets to return; clamped to `MAX_ASSET_COUNT`. */
+  maxAssets?: number;
+  /** Max decoded bytes per asset; clamped to `MAX_ASSET_BYTES`. */
+  maxAssetBytes?: number;
+}
+
+/**
+ * Start the local static preview server (Phase 8) for the sandboxed clone tree.
+ * The `root` is the absolute clones directory resolved by Rust; the worker binds
+ * loopback-only and serves strictly from that root.
+ */
+export interface ServeCloneCommandPayload {
+  command: 'serveClone';
+  /** Absolute clone root the server is confined to. */
+  root: string;
+  /** Optional preferred port; the worker falls back to an ephemeral port. */
+  port?: number;
+}
+
+export interface StopCloneCommandPayload {
+  command: 'stopClone';
+}
+
 export type WorkerCommandPayload =
   | PingCommandPayload
   | LaunchCommandPayload
@@ -272,7 +331,10 @@ export type WorkerCommandPayload =
   | AbortCommandPayload
   | DetectLoginCommandPayload
   | CaptureStateCommandPayload
-  | CaptureViewportCommandPayload;
+  | CaptureViewportCommandPayload
+  | CaptureAssetsCommandPayload
+  | ServeCloneCommandPayload
+  | StopCloneCommandPayload;
 
 // ---------------------------------------------------------------------------
 // Result payloads (worker -> host)
@@ -314,11 +376,29 @@ export interface CloseResultPayload {
   sessionId: string;
 }
 
+/**
+ * A bounded raw HTML capture (Phase 8). The clone engine rewrites this body; it
+ * is captured from the same isolated context as the extraction. Over-cap bodies
+ * are truncated and flagged rather than dropped.
+ */
+export interface RawHtmlCapture {
+  html: string;
+  /** UTF-8 byte length of the returned (possibly truncated) body. */
+  byteLength: number;
+  truncated: boolean;
+}
+
 export interface ExtractResultPayload {
   command: 'extract';
   sessionId: string;
   /** Normalized, bounded page result (raw evidence is never sent to the host). */
   page: NormalizedPage;
+  /**
+   * The page's raw HTML body, bounded by `MAX_RAW_HTML_BYTES`. Present only when
+   * the host requested capture (Phase 8 clone); omitted otherwise so Phase 4
+   * consumers see the exact same frame as before.
+   */
+  rawHtml?: RawHtmlCapture;
 }
 
 export interface AbortResultPayload {
@@ -370,6 +450,48 @@ export interface ViewportElementNode {
   fontSize: number;
 }
 
+/** One captured asset returned by `captureAssets` (bytes base64-encoded). */
+export interface CapturedAsset {
+  /** Absolute URL the asset was requested from. */
+  sourceUrl: string;
+  mimeType: string;
+  /** Classified kind; mirrors the `scan_assets.asset_type` CHECK. */
+  assetType: 'image' | 'stylesheet' | 'script' | 'font' | 'video' | 'audio' | 'document' | 'other';
+  sizeBytes: number;
+  /** SHA-256 (hex) of the decoded bytes; the de-duplication key. */
+  sha256: string;
+  /** Base64 payload, bounded by `MAX_ASSET_BYTES`. */
+  base64: string;
+}
+
+export interface CaptureAssetsResultPayload {
+  command: 'captureAssets';
+  sessionId: string;
+  url: string;
+  finalUrl: string;
+  status: number | null;
+  assets: CapturedAsset[];
+  /** Assets that could not be fetched or exceeded a cap. */
+  skipped: number;
+  /** True when the asset list (not the payloads) was truncated by `maxAssets`. */
+  truncated: boolean;
+}
+
+export interface ServeCloneResultPayload {
+  command: 'serveClone';
+  /** The loopback origin the preview server is listening on. */
+  url: string;
+  /** The port it actually bound. */
+  port: number;
+  /** The absolute (canonical) clone root being served. */
+  root: string;
+}
+
+export interface StopCloneResultPayload {
+  command: 'stopClone';
+  stopped: boolean;
+}
+
 export interface CaptureViewportResultPayload {
   command: 'captureViewport';
   sessionId: string;
@@ -397,7 +519,10 @@ export type WorkerResultPayload =
   | AbortResultPayload
   | DetectLoginResultPayload
   | CaptureStateResultPayload
-  | CaptureViewportResultPayload;
+  | CaptureViewportResultPayload
+  | CaptureAssetsResultPayload
+  | ServeCloneResultPayload
+  | StopCloneResultPayload;
 
 // ---------------------------------------------------------------------------
 // Event / log / error payloads
@@ -502,7 +627,10 @@ const COMMAND_NAMES: readonly WorkerCommandName[] = [
   'abort',
   'detectLogin',
   'captureState',
-  'captureViewport'
+  'captureViewport',
+  'captureAssets',
+  'serveClone',
+  'stopClone'
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -616,7 +744,8 @@ function validateCommandPayload(payload: unknown): boolean {
           (typeof payload.maxRedirects === 'number' && Number.isInteger(payload.maxRedirects))) &&
         (payload.allowedContentTypes === undefined ||
           (Array.isArray(payload.allowedContentTypes) &&
-            payload.allowedContentTypes.every((entry) => typeof entry === 'string')))
+            payload.allowedContentTypes.every((entry) => typeof entry === 'string'))) &&
+        (payload.captureHtml === undefined || typeof payload.captureHtml === 'boolean')
       );
     case 'abort':
       return isNonEmptyString(payload.sessionId);
@@ -637,6 +766,25 @@ function validateCommandPayload(payload: unknown): boolean {
         Number.isFinite(payload.timeoutMs) &&
         isViewportProfile(payload.profile)
       );
+    case 'captureAssets':
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNonEmptyString(payload.url) &&
+        typeof payload.timeoutMs === 'number' &&
+        Number.isFinite(payload.timeoutMs) &&
+        (payload.maxAssets === undefined ||
+          (typeof payload.maxAssets === 'number' && Number.isInteger(payload.maxAssets))) &&
+        (payload.maxAssetBytes === undefined ||
+          (typeof payload.maxAssetBytes === 'number' && Number.isInteger(payload.maxAssetBytes)))
+      );
+    case 'serveClone':
+      return (
+        isNonEmptyString(payload.root) &&
+        (payload.port === undefined ||
+          (typeof payload.port === 'number' && Number.isInteger(payload.port)))
+      );
+    case 'stopClone':
+      return true;
     default:
       return false;
   }
@@ -665,7 +813,11 @@ function validateResultPayload(payload: unknown): boolean {
     case 'close':
       return isNonEmptyString(payload.sessionId);
     case 'extract':
-      return isNonEmptyString(payload.sessionId) && isNormalizedPageShape(payload.page);
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNormalizedPageShape(payload.page) &&
+        (payload.rawHtml === undefined || isRawHtmlCapture(payload.rawHtml))
+      );
     case 'abort':
       return isNonEmptyString(payload.sessionId);
     case 'detectLogin':
@@ -705,9 +857,53 @@ function validateResultPayload(payload: unknown): boolean {
         ) &&
         typeof payload.truncated === 'boolean'
       );
+    case 'captureAssets':
+      return (
+        isNonEmptyString(payload.sessionId) &&
+        isNonEmptyString(payload.url) &&
+        isNonEmptyString(payload.finalUrl) &&
+        (payload.status === null || typeof payload.status === 'number') &&
+        Array.isArray(payload.assets) &&
+        payload.assets.length <= MAX_ASSET_COUNT &&
+        payload.assets.every(isCapturedAssetShape) &&
+        typeof payload.skipped === 'number' &&
+        typeof payload.truncated === 'boolean'
+      );
+    case 'serveClone':
+      return (
+        isNonEmptyString(payload.url) &&
+        typeof payload.port === 'number' &&
+        isNonEmptyString(payload.root)
+      );
+    case 'stopClone':
+      return typeof payload.stopped === 'boolean';
     default:
       return false;
   }
+}
+
+/** Bounded structural check of a captured asset. */
+function isCapturedAssetShape(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value.sourceUrl) &&
+    typeof value.mimeType === 'string' &&
+    typeof value.assetType === 'string' &&
+    typeof value.sizeBytes === 'number' &&
+    typeof value.sha256 === 'string' &&
+    typeof value.base64 === 'string' &&
+    value.base64.length <= MAX_ASSET_BYTES * 2
+  );
+}
+
+/** Bounded structural check of a raw HTML capture. */
+function isRawHtmlCapture(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.html === 'string' &&
+    typeof value.byteLength === 'number' &&
+    typeof value.truncated === 'boolean'
+  );
 }
 
 /**

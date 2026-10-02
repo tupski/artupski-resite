@@ -199,6 +199,60 @@ export function assetDelete(relative: string): Promise<IpcResult<void>> {
   );
 }
 
+/**
+ * Return the absolute sandboxed clone root (`<app_local_data_dir>/clones`). The
+ * preview server is pointed at this path; the frontend never supplies one.
+ */
+export function cloneRoot(): Promise<IpcResult<string>> {
+  return safeInvoke<string>(
+    'clone_root',
+    {},
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to resolve the clone directory.'
+    }
+  );
+}
+
+/**
+ * Write bytes to a RELATIVE path inside the sandboxed clone tree. The Rust
+ * `clone_write` command rejects absolute paths and any `..` component.
+ */
+export function cloneWrite(relative: string, data: Uint8Array): Promise<IpcResult<string>> {
+  return safeInvoke<string>(
+    'clone_write',
+    { relative, data: Array.from(data) },
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to write the clone file.'
+    }
+  );
+}
+
+/** Read a previously written clone file. A missing file returns an error. */
+export function cloneRead(relative: string): Promise<IpcResult<number[]>> {
+  return safeInvoke<number[]>(
+    'clone_read',
+    { relative },
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to read the clone file.'
+    }
+  );
+}
+
+/** Delete a previously written clone file. A missing file is treated as success. */
+export function cloneDelete(relative: string): Promise<IpcResult<void>> {
+  return safeInvoke<void>(
+    'clone_delete',
+    { relative },
+    {
+      ...ASSET_FALLBACK,
+      message: 'Failed to delete the clone file.'
+    }
+  );
+}
+
 /** Payload of the Rust `process://stdout` / `process://stderr` events. */
 export interface ProcessStreamEvent {
   id: string;

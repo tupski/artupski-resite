@@ -43,7 +43,14 @@ const FILE_ROUTES = new Map([
   ['/auth/protected', join(FIXTURES_DIR, 'auth', 'protected.html')],
   // Responsive fixture with deliberate media-query breakpoints (Phase 7).
   ['/responsive', join(FIXTURES_DIR, 'responsive', 'index.html')],
-  ['/responsive/', join(FIXTURES_DIR, 'responsive', 'index.html')]
+  ['/responsive/', join(FIXTURES_DIR, 'responsive', 'index.html')],
+  // Clone fixture (Phase 8): a page with local assets and a tracking script.
+  ['/clone', join(FIXTURES_DIR, 'clone', 'index.html')],
+  ['/clone/', join(FIXTURES_DIR, 'clone', 'index.html')],
+  ['/clone/about', join(FIXTURES_DIR, 'clone', 'about.html')],
+  ['/clone/assets/style.css', join(FIXTURES_DIR, 'clone', 'assets', 'style.css')],
+  ['/clone/assets/logo.svg', join(FIXTURES_DIR, 'clone', 'assets', 'logo.svg')],
+  ['/clone/assets/app.js', join(FIXTURES_DIR, 'clone', 'assets', 'app.js')]
 ]);
 
 /**
@@ -181,7 +188,13 @@ async function handleRequest(request, response) {
     response.end('Not found');
     return;
   }
-  const contentType = filePath.endsWith('.svg') ? { 'content-type': 'image/svg+xml' } : HTML;
+  const contentType = filePath.endsWith('.svg')
+    ? { 'content-type': 'image/svg+xml' }
+    : filePath.endsWith('.css')
+      ? { 'content-type': 'text/css; charset=utf-8' }
+      : filePath.endsWith('.js')
+        ? { 'content-type': 'text/javascript; charset=utf-8' }
+        : HTML;
   await serveFile(response, filePath, contentType);
 }
 

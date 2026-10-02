@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 8 - static clone engine & local asset server
+
+Generates a self-contained, offline static clone of a scanned site and serves it from a local preview server. **No new process manager or browser runtime was created**; the worker protocol was extended additively and `WORKER_PROTOCOL_VERSION` stays `1`.
+
+- **Critical-gap fix (Phase 4/7 never persisted raw HTML or asset bytes)**: the worker `extract` command gains a bounded `captureHtml` option (4 MiB cap, truncated + flagged), and a new `captureAssets` command fetches a page's referenced assets (stylesheet/script/image/media) with the shared `evaluateUrlPolicy` applied to **every** asset URL and de-duplication by SHA-256 (caps: 200 assets, 8 MiB each; over-cap assets are dropped and counted, never substituted).
+- **Persistence**: forward-only migration `007_scan_assets.ts` (version 7) creates `scan_assets` (with a UNIQUE `(scan_id, sha256)` de-dupe index, a `page_url` field, FK cascade, and the `asset_type` CHECK) and adds a nullable `scan_pages.raw_html_path` column. `AssetRepository` owns all its SQL. See `DATABASE.md` section 2.6.
+- **Engine**: `src/services/clone/` - pure `clonePaths` (traversal-safe paths), `htmlRewriter` / `cssRewriter` (CLONE-SPEC sections 3-4), `mockClient` (section 5), and `manifest` (section 2), composed by `cloneService`; `runClone` is the UI seam. Asset bytes are written to disk, only metadata + the relative path are persisted. A page whose HTML cannot be captured is **skipped and counted**, never fabricated.
+- **Native boundary + local server**: `src-tauri/src/clone.rs` adds `clone_root` / `clone_write` / `clone_read` / `clone_delete`, confined to `<app_local_data_dir>/clones` (same hard sandbox as `asset.rs`). `src/workers/cloneServer/` is a `ProcessManager`-managed Node child that binds loopback-only, serves strictly the canonical clone root (`serverPathPolicy` rejects traversal/absolute/NUL/backslash and re-verifies the symlink-resolved target), and is opened in the system browser so the webview CSP `connect-src` is never widened.
+- **UI**: a `ClonePanel` on the Scan route (backed by `src/stores/cloneStore.ts`) offers "Generate static clone" + a local preview, with honest loading/empty/error/partial states; a partial run lists skipped pages/assets.
+- **Events**: `clone.started`, `clone.file_generated`, `clone.asset_downloaded`, `clone.server_started`, `clone.server_stopped`, `clone.completed`, `clone.failed` added to the taxonomy (counts/paths/SHAs only, no file contents).
+- **Tests**: path/rewriter/CSS/manifest/server-policy units, migration 007 + `AssetRepository` (+ de-dupe/cascade/reopen) tests, protocol validation for the new frames, the `cloneService` orchestration (including the honest skip path), `cloneStore` state tests, and an **opt-in real-Chromium** E2E (`cloneCapture.e2e.test.ts`, fixture port 4173) that captures raw HTML + assets and asserts a self-contained rewrite.
+- **Documented deviations**: the CLONE-SPEC rewriter pseudocode's parser dependencies (`htmlparser2`/`dom-serializer`/`css-select`) are not project dependencies, so a bounded dependency-free rewriter is used. **Deferred**: ZIP export and the native folder-explorer trigger (CLONE-SPEC section 6.2-6.3; no `zip` crate dependency), and full CSS bundling/minification. Tailwind responsive-rule synthesis remains deferred Phase 7 work and is **not** part of Phase 8.
+- **Open decisions**: C3-C7 resolved in `docs/impl-plan/phase-8-impl-plan.md` section 10.
+
 ### Phase 7 - responsive layout & viewport analysis
 
 Multi-viewport capture on top of the Phase 4 crawler. **No new process manager, browser runtime, or crawler was created**; the worker protocol was extended additively and `WORKER_PROTOCOL_VERSION` stays `1`.

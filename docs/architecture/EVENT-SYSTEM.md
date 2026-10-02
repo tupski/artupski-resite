@@ -29,7 +29,7 @@ Standardized event key structure: `<domain>.<action_or_state>`.
 - `responsive.*`: Viewport switching, responsive rule extraction.
 - `auth.*`: Session initialization, cookie extraction, login auto-fill.
 - `blueprint.*`: Schema parsing, Zod validation, blueprint generation.
-- `clone.*`: Local HTML path rewriting, web server serving, static preview.
+- `clone.*`: Local HTML path rewriting, web server serving, static preview (`clone.started`, `clone.file_generated`, `clone.asset_downloaded`, `clone.server_started`, `clone.server_stopped`, `clone.completed`, `clone.failed`).
 - `project.*`: Codebase generation, file writing, package installation.
 - `storage.*`: Local database initialization, migration lifecycle, readiness.
 - `process.*`: Child-process lifecycle (spawn/ready/busy/stopping/stopped/exited/failed).

@@ -75,8 +75,9 @@ describe('SqliteDatabase', () => {
     expect(names).toContain('schema_migrations');
     // Added by the authentication phase (migration 004).
     expect(names).toContain('auth_sessions');
+    // Added by the static clone phase (migration 007).
+    expect(names).toContain('scan_assets');
     // Tables owned by later phases must NOT exist yet.
-    expect(names).not.toContain('scan_assets');
     expect(names).not.toContain('blueprints');
     await storage.close();
   });

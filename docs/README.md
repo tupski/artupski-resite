@@ -56,3 +56,9 @@ guidelines and history, see the root files: [`AGENTS.md`](../AGENTS.md),
 | Document | Description |
 | :--- | :--- |
 | [`TESTING.md`](dev/TESTING.md) | Testing strategy and guidelines. |
+
+## Implementation Plans
+
+| Document | Description |
+| :--- | :--- |
+| [`phase-8-impl-plan.md`](impl-plan/phase-8-impl-plan.md) | Static clone engine & local asset server (Phase 8): files, migration, protocol, tests, risks, and the C3-C7 decision resolutions. |

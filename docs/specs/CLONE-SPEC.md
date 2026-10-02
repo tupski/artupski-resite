@@ -2,6 +2,12 @@
 
 Technical specification for producing standalone, offline-runnable static clones of reverse-engineered websites.
 
+> **Implementation status (Phase 8, as built).** Sections 2-5 are delivered: the clone tree layout, the HTML/CSS rewriting pipeline, and the `mock-client.js` stub. Two documented deviations from the illustrative code in this spec:
+> 1. **No parser dependency.** The section-3.2 pseudocode imports `htmlparser2`/`dom-serializer`/`css-select`; those are not project dependencies and adding one is out of scope, so `src/services/clone/htmlRewriter.ts` is a small, bounded, dependency-free rewriter. It is conservative: anything it does not understand is left untouched.
+> 2. **Capture is a worker capability, not page-script execution.** Raw HTML comes from the worker's `extract` (`captureHtml`) and asset bytes from the `captureAssets` command - both bounded and URL-policy-checked - rather than a HAR.
+>
+> Section 6.2 (**ZIP archiver**) and 6.3 (**native folder-explorer trigger**) are **deferred** (no `zip` crate dependency; out of Phase 8 scope - see `docs/impl-plan/phase-8-impl-plan.md`, decision C6). Section 6.1 (**local disk writer**) and the local static server are delivered: the writer is the sandboxed `src-tauri/src/clone.rs` confined to `<app_local_data_dir>/clones`, and the server is a loopback-only managed Node process.
+
 ---
 
 ## 1. Architectural Distinction Matrix

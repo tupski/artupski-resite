@@ -36,7 +36,7 @@ interface WorkerEnvelope<TType, TPayload> {
 
 | Type | Direction | Purpose |
 | :--- | :--- | :--- |
-| `command` | host → worker | An operation to perform (`ping`, `launch`, `navigate`, `close`, `extract`, `abort`, `detectLogin`, `captureState`, `captureViewport`). |
+| `command` | host → worker | An operation to perform (`ping`, `launch`, `navigate`, `close`, `extract`, `abort`, `detectLogin`, `captureState`, `captureViewport`, `captureAssets`, `serveClone`, `stopClone`). |
 | `result` | worker → host | The correlated outcome of a command (matched by `id`). May carry `error`. |
 | `event` | worker → host | Asynchronous worker telemetry (e.g. `browser.launched`). |
 | `log` | worker → host | Structured log line (level + message + optional metadata). |
@@ -124,7 +124,19 @@ not_started → starting → ready ⇄ busy
 
 ---
 
-## 6. Security
+## 6. Phase 8 (static clone) additions (as built)
+
+The static clone phase extends the protocol **additively**; `WORKER_PROTOCOL_VERSION` stays `1` and no existing frame changes meaning.
+
+- **`extract` gains `captureHtml?: boolean`** (default `false`). When true, the result payload gains a bounded `rawHtml: { html, byteLength, truncated }` field (`MAX_RAW_HTML_BYTES` = 4 MiB, truncated on a code-point boundary and flagged). Phase 4 callers that omit it receive a byte-identical frame to before.
+- **`captureAssets`** navigates with the SAME URL policy enforcement as `extract`, then enumerates a page's referenced assets (stylesheet/script/image/media/`url(...)`, `srcset`), checks **every** asset URL against `evaluateUrlPolicy` before requesting it, fetches the bytes in the page context (so same-origin cookies apply), de-duplicates by SHA-256, and returns bounded base64 payloads. Caps: `MAX_ASSET_COUNT` (200) and `MAX_ASSET_BYTES` (8 MiB per asset); over-cap assets are dropped and counted in `skipped`, never substituted.
+- **`serveClone` / `stopClone`** drive the dedicated clone **preview server** worker (`src/workers/cloneServer/`, a `ProcessManager`-managed Node child). `serveClone` takes the absolute clone root (from the Rust `clone_root` command), binds loopback-only on an ephemeral port, and returns `{ url, port, root }`. The server serves strictly from the canonical root; every request path is confined by the shared `serverPathPolicy` (traversal/absolute/NUL/backslash rejected) and the real (symlink-resolved) target is re-verified in-root.
+- **Boundary validation**: `COMMAND_NAMES`, `validateCommandPayload`, and `validateResultPayload` cover the new shapes; malformed frames remain `WORKER_PROTOCOL_VIOLATION`. The asset/tooling tests live in `src/services/infra/workerProtocol.test.ts` and the worker E2E in `src/workers/crawler/__tests__/cloneCapture.e2e.test.ts`.
+- **No secrets**: asset bytes are content; cookie/token values are never echoed in any result, log, or event.
+
+---
+
+## 7. Security
 
 - The worker is spawned by the sandboxed Rust commands (`process_spawn`) with an **array** of arguments and **no shell**.
 - The executable must be on the Rust allowlist (`node` / `node.exe`).

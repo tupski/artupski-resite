@@ -14,6 +14,8 @@
 import type {
   AppSetting,
   AuthSession,
+  CloneAsset,
+  CloneAssetType,
   Project,
   ProjectStatus,
   Scan,
@@ -74,7 +76,7 @@ export interface ScanRow {
   error_details: string | null;
 }
 
-/** Raw `scan_pages` row shape as returned by sql.js (migration 002). */
+/** Raw `scan_pages` row shape as returned by sql.js (migrations 002 + 007). */
 export interface ScanPageRow {
   id: string;
   scan_id: string;
@@ -100,6 +102,23 @@ export interface ScanPageRow {
   images: string | null;
   warnings: string | null;
   captured_at: string;
+  created_at: string;
+  /** Migration 007; null on legacy rows. */
+  raw_html_path: string | null;
+}
+
+/** Raw `scan_assets` row shape as returned by sql.js (migration 007). */
+export interface ScanAssetRow {
+  id: string;
+  scan_id: string;
+  page_id: string | null;
+  page_url: string | null;
+  source_url: string;
+  local_path: string;
+  mime_type: string;
+  size_bytes: number;
+  sha256: string;
+  asset_type: string;
   created_at: string;
 }
 
@@ -223,6 +242,23 @@ export function toScanPage(row: ScanPageRow): ScanPage {
     images: parseJsonArray<ScanPageImage>(row.images),
     warnings: parseJsonArray<string>(row.warnings),
     capturedAt: row.captured_at,
+    createdAt: row.created_at,
+    rawHtmlPath: row.raw_html_path ?? null
+  };
+}
+
+export function toCloneAsset(row: ScanAssetRow): CloneAsset {
+  return {
+    id: row.id,
+    scanId: row.scan_id,
+    pageId: row.page_id,
+    pageUrl: row.page_url,
+    sourceUrl: row.source_url,
+    localPath: row.local_path,
+    mimeType: row.mime_type,
+    sizeBytes: row.size_bytes,
+    sha256: row.sha256,
+    assetType: row.asset_type as CloneAssetType,
     createdAt: row.created_at
   };
 }
@@ -311,6 +347,21 @@ export interface CreateScanInput {
   id?: string;
 }
 
+/** A downloaded asset ready to persist (`scan_assets`, migration 007). */
+export interface UpsertCloneAssetInput {
+  /** Optional caller-supplied id; the repository falls back to a UUID. */
+  id?: string;
+  scanId: string;
+  pageId: string | null;
+  pageUrl: string | null;
+  sourceUrl: string;
+  localPath: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  assetType: CloneAssetType;
+}
+
 /** A page result ready to persist. `url` is the canonical dedupe key per scan. */
 export interface UpsertScanPageInput {
   scanId: string;
@@ -337,6 +388,11 @@ export interface UpsertScanPageInput {
   images: ScanPageImage[];
   warnings: string[];
   capturedAt: string;
+  /**
+   * On-disk path to the captured raw HTML (migration 007), or null when no HTML
+   * was captured. Optional so existing callers compile unchanged.
+   */
+  rawHtmlPath?: string | null;
 }
 
 export interface CreateScanTechnologyInput {

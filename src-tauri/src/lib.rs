@@ -8,6 +8,7 @@
 use serde::Serialize;
 
 mod asset;
+mod clone;
 mod process;
 mod storage;
 
@@ -64,6 +65,10 @@ pub fn run() {
             storage::storage_write_database,
             asset::asset_write,
             asset::asset_delete,
+            clone::clone_root,
+            clone::clone_write,
+            clone::clone_read,
+            clone::clone_delete,
             process::process_spawn,
             process::process_write,
             process::process_kill,

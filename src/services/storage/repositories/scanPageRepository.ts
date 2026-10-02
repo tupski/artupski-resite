@@ -17,7 +17,8 @@ import { toScanPage, type ScanPageRow, type UpsertScanPageInput } from '../types
 const COLUMNS =
   'id, scan_id, url, final_url, path, depth, http_status, title, meta_description, canonical_url, ' +
   'robots_meta, status, auth_status, error_code, error_message, load_time_ms, dom_content_loaded_time_ms, ' +
-  'dom_node_count, headings, internal_links, external_links, images, warnings, captured_at, created_at';
+  'dom_node_count, headings, internal_links, external_links, images, warnings, captured_at, created_at, ' +
+  'raw_html_path';
 
 const VALID_STATUSES: ReadonlySet<ScanPageStatus> = new Set([
   'completed',
@@ -59,15 +60,16 @@ function toParams(input: UpsertScanPageInput): (string | number | null)[] {
     JSON.stringify(input.externalLinks),
     JSON.stringify(input.images),
     JSON.stringify(input.warnings),
-    input.capturedAt
+    input.capturedAt,
+    input.rawHtmlPath ?? null
   ];
 }
 
 const UPSERT_SQL = `INSERT INTO scan_pages (
   id, scan_id, url, final_url, path, depth, http_status, title, meta_description, canonical_url,
   robots_meta, status, auth_status, error_code, error_message, load_time_ms, dom_content_loaded_time_ms,
-  dom_node_count, headings, internal_links, external_links, images, warnings, captured_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  dom_node_count, headings, internal_links, external_links, images, warnings, captured_at, raw_html_path
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(scan_id, url) DO UPDATE SET
   final_url = excluded.final_url,
   path = excluded.path,
@@ -89,7 +91,8 @@ ON CONFLICT(scan_id, url) DO UPDATE SET
   external_links = excluded.external_links,
   images = excluded.images,
   warnings = excluded.warnings,
-  captured_at = excluded.captured_at;`;
+  captured_at = excluded.captured_at,
+  raw_html_path = COALESCE(excluded.raw_html_path, scan_pages.raw_html_path);`;
 
 export class ScanPageRepository {
   private readonly context: StorageContext;

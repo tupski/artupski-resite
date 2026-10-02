@@ -39,6 +39,7 @@ export {
   type RunMigrationsOptions
 } from './migrations';
 
+export { AssetRepository } from './repositories/assetRepository';
 export { AuthSessionRepository } from './repositories/authSessionRepository';
 export { ProjectRepository } from './repositories/projectRepository';
 export {
@@ -67,6 +68,7 @@ export type {
   CreateScanInput,
   CreateScanTechnologyInput,
   UpdateProjectInput,
+  UpsertCloneAssetInput,
   UpsertScanPageInput,
   UpsertScanTechnologyInput
 } from './types';

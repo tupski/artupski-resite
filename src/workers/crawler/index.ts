@@ -15,6 +15,7 @@
  *   node --experimental-strip-types src/workers/crawler/index.ts
  */
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { lookup } from 'node:dns/promises';
 
@@ -36,8 +37,10 @@ import {
   createEmptyLoginSignals,
   type AuthStorageState,
   type BrowserAvailability,
+  type CaptureAssetsResultPayload,
   type CaptureStateResultPayload,
   type CaptureViewportResultPayload,
+  type CapturedAsset,
   type CloseResultPayload,
   type DetectLoginResultPayload,
   type ExtractResultPayload,
@@ -48,10 +51,14 @@ import {
   type NormalizedPage,
   type PageExtraction,
   type PingResultPayload,
+  type RawHtmlCapture,
   type ViewportElementNode,
   type WorkerCommandMessage,
   type WorkerResultPayload,
-  MAX_SCREENSHOT_BASE64_BYTES
+  MAX_SCREENSHOT_BASE64_BYTES,
+  MAX_RAW_HTML_BYTES,
+  MAX_ASSET_COUNT,
+  MAX_ASSET_BYTES
 } from './protocol.ts';
 import { LOGIN_PROBE_EXPRESSION } from '../../services/scanner/extraction/inPageExtractor.ts';
 import { classifyIpLiteral } from '../../services/scanner/security/ipPolicy.ts';
@@ -91,6 +98,7 @@ interface PlaywrightPage {
   ): Promise<PlaywrightResponse | null>;
   title(): Promise<string>;
   url(): string;
+  content(): Promise<string>;
   evaluate<T>(expression: string): Promise<T>;
   route(pattern: string, handler: (route: PlaywrightRoute) => void | Promise<void>): Promise<void>;
   close(): Promise<void>;
@@ -594,6 +602,27 @@ async function installRouteGuard(
   });
 }
 
+/**
+ * Read the page's raw HTML and bound it to `MAX_RAW_HTML_BYTES` (UTF-8). A body
+ * that exceeds the cap is truncated on a code-point boundary and flagged so the
+ * host never mistakes a partial capture for a complete one.
+ */
+async function captureRawHtml(page: PlaywrightPage): Promise<RawHtmlCapture> {
+  const html = await page.content();
+  const byteLength = Buffer.byteLength(html, 'utf8');
+  if (byteLength <= MAX_RAW_HTML_BYTES) {
+    return { html, byteLength, truncated: false };
+  }
+  // Truncate by bytes, then drop any trailing partial code point.
+  const buffer = Buffer.from(html, 'utf8').subarray(0, MAX_RAW_HTML_BYTES);
+  const truncatedHtml = buffer.toString('utf8').replace(/\uFFFD$/, '');
+  return {
+    html: truncatedHtml,
+    byteLength: Buffer.byteLength(truncatedHtml, 'utf8'),
+    truncated: true
+  };
+}
+
 async function handleExtract(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
   if (message.payload.command !== 'extract') {
     throw new Error('extract handler received the wrong command');
@@ -740,10 +769,229 @@ async function handleExtract(message: WorkerCommandMessage): Promise<WorkerResul
       sessionId: message.payload.sessionId,
       page: normalized
     };
+    // Phase 8 clone: optionally return the raw HTML body, bounded and flagged.
+    if (message.payload.captureHtml === true) {
+      payload.rawHtml = await captureRawHtml(page);
+    }
     return payload;
   } finally {
     session.activeAbort = null;
     await page.close().catch(() => undefined);
+  }
+}
+
+/**
+ * In-page expression that collects the page's referenced asset URLs (stylesheet
+ * links, script sources, image src/srcset, media sources, and `url(...)` refs in
+ * inline styles). Returns absolute URLs, deduplicated and capped; it is a
+ * read-only DOM walk (no page script is executed to build it beyond the browser
+ * already having run).
+ */
+const ASSET_URL_PROBE = `(() => {
+  var out = [];
+  var seen = {};
+  var push = function (u, type) {
+    if (!u) return;
+    try { u = new URL(u, document.baseURI).href; } catch (e) { return; }
+    if (!/^https?:/i.test(u)) return;
+    if (seen[u]) return;
+    seen[u] = true;
+    out.push({ url: u, type: type });
+  };
+  document.querySelectorAll('link[rel~="stylesheet"][href]').forEach(function (el) { push(el.getAttribute('href'), 'stylesheet'); });
+  document.querySelectorAll('script[src]').forEach(function (el) { push(el.getAttribute('src'), 'script'); });
+  document.querySelectorAll('img[src]').forEach(function (el) { push(el.getAttribute('src'), 'image'); });
+  document.querySelectorAll('img[srcset], source[srcset]').forEach(function (el) {
+    (el.getAttribute('srcset') || '').split(',').forEach(function (part) { push((part.trim().split(/\\s+/)[0]) || '', 'image'); });
+  });
+  document.querySelectorAll('source[src], video[src], audio[src]').forEach(function (el) { push(el.getAttribute('src'), 'other'); });
+  document.querySelectorAll('[style]').forEach(function (el) {
+    var style = el.getAttribute('style') || '';
+    var re = /url\\((['"]?)([^'")]+)\\1\\)/g; var m;
+    while ((m = re.exec(style)) !== null) { push(m[2], 'font'); }
+  });
+  document.querySelectorAll('link[rel~="icon"][href], link[rel~="manifest"][href]').forEach(function (el) { push(el.getAttribute('href'), 'image'); });
+  return out;
+})()`;
+
+interface AssetUrlRef {
+  url: string;
+  type: string;
+}
+
+/** Classify a captured asset into the `scan_assets.asset_type` check domain. */
+function classifyAssetType(
+  hint: string,
+  mimeType: string
+): CapturedAsset['assetType'] {
+  const mime = mimeType.toLowerCase();
+  if (mime.includes('css') || hint === 'stylesheet') return 'stylesheet';
+  if (mime.includes('javascript') || hint === 'script') return 'script';
+  if (mime.includes('font') || mime.includes('woff') || hint === 'font') return 'font';
+  if (mime.startsWith('image/') || hint === 'image') return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.includes('json') || mime.includes('xml')) return 'document';
+  return 'other';
+}
+
+/**
+ * Fetch the referenced assets of `url` for the static clone engine (Phase 8).
+ * Every asset URL is checked against the shared URL policy BEFORE it is
+ * requested (exactly as navigation boundaries are); bytes are read in the page
+ * context so same-origin cookies apply, then bounded and returned as base64.
+ * Assets that fail a check or exceed a cap are counted in `skipped`.
+ */
+async function handleCaptureAssets(message: WorkerCommandMessage): Promise<WorkerResultPayload> {
+  if (message.payload.command !== 'captureAssets') {
+    throw new Error('captureAssets handler received the wrong command');
+  }
+  const session = sessions.get(message.payload.sessionId);
+  if (!session) {
+    throw Object.assign(new Error(`Unknown session "${message.payload.sessionId}".`), {
+      code: 'PLAYWRIGHT_CRASHED'
+    });
+  }
+
+  const requestedUrl = message.payload.url;
+  const maxAssets = Math.min(message.payload.maxAssets ?? MAX_ASSET_COUNT, MAX_ASSET_COUNT);
+  const maxAssetBytes = Math.min(message.payload.maxAssetBytes ?? MAX_ASSET_BYTES, MAX_ASSET_BYTES);
+  const trustedOrigins = [new URL(requestedUrl).origin];
+  const decision = await evaluateUrlPolicy(requestedUrl, { resolveHost, trustedOrigins });
+  if (!decision.allowed) {
+    throw Object.assign(new Error(`Navigation blocked by the URL policy (${decision.reason}).`), {
+      code: 'INVALID_URL',
+      detail: decision.detail
+    });
+  }
+
+  const abort = new AbortController();
+  session.activeAbort = abort;
+  const page = await session.context.newPage();
+  const trustedHosts = new Set<string>([new URL(requestedUrl).hostname.toLowerCase()]);
+
+  try {
+    await installRouteGuard(page, trustedHosts);
+    let status: number | null = null;
+    let response: PlaywrightResponse | null;
+    try {
+      response = await page.goto(requestedUrl, {
+        timeout: clampTimeout(message.payload.timeoutMs),
+        waitUntil: 'load'
+      });
+    } catch (error) {
+      if (abort.signal.aborted) {
+        throw Object.assign(new Error('Asset capture was cancelled.'), { code: 'USER_CANCELLED' });
+      }
+      const messageText = error instanceof Error ? error.message : 'Navigation failed.';
+      if (/timeout/i.test(messageText)) {
+        throw Object.assign(new Error('Asset capture navigation timed out.'), {
+          code: 'CONNECTION_TIMED_OUT'
+        });
+      }
+      throw Object.assign(new Error(messageText), { code: 'NAVIGATION_ABORTED' });
+    }
+    status = response ? response.status() : null;
+    const finalUrl = page.url();
+
+    const refs = await page.evaluate<AssetUrlRef[]>(ASSET_URL_PROBE);
+    const assets: CapturedAsset[] = [];
+    const seenHashes = new Set<string>();
+    let skipped = 0;
+    let truncated = false;
+
+    for (const ref of refs) {
+      if (assets.length >= maxAssets) {
+        truncated = true;
+        break;
+      }
+      // Every asset URL is policy-checked before it is requested.
+      const assetDecision = await evaluateUrlPolicy(ref.url, { resolveHost, trustedOrigins });
+      if (!assetDecision.allowed) {
+        skipped += 1;
+        continue;
+      }
+      const fetched = await fetchAssetBytes(page, ref.url, maxAssetBytes);
+      if (!fetched) {
+        skipped += 1;
+        continue;
+      }
+      const sha256 = createHash('sha256').update(fetched.bytes).digest('hex');
+      if (seenHashes.has(sha256)) {
+        continue;
+      }
+      seenHashes.add(sha256);
+      assets.push({
+        sourceUrl: ref.url,
+        mimeType: fetched.mimeType,
+        assetType: classifyAssetType(ref.type, fetched.mimeType),
+        sizeBytes: fetched.bytes.length,
+        sha256,
+        base64: Buffer.from(fetched.bytes).toString('base64')
+      });
+    }
+
+    const payload: CaptureAssetsResultPayload = {
+      command: 'captureAssets',
+      sessionId: message.payload.sessionId,
+      url: requestedUrl,
+      finalUrl,
+      status,
+      assets,
+      skipped,
+      truncated
+    };
+    return payload;
+  } finally {
+    session.activeAbort = null;
+    await page.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Fetch one asset's bytes inside the page context (so same-origin cookies and
+ * the browser's TLS/DNS stack apply), returning null when it fails or exceeds
+ * the per-asset cap. The bytes are base64 in transit; the MIME type is taken
+ * from the response. No cookie/token value is ever read out.
+ */
+async function fetchAssetBytes(
+  page: PlaywrightPage,
+  url: string,
+  maxBytes: number
+): Promise<{ bytes: Uint8Array; mimeType: string } | null> {
+  const expression = `(async () => {
+    try {
+      var res = await fetch(${JSON.stringify(url)}, { credentials: 'include' });
+      if (!res.ok) return { ok: false };
+      var buf = await res.arrayBuffer();
+      if (buf.byteLength > ${maxBytes}) return { ok: false, oversize: true };
+      var bytes = new Uint8Array(buf);
+      var binary = '';
+      var chunk = 0x8000;
+      for (var i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      return { ok: true, base64: btoa(binary), mimeType: res.headers.get('content-type') || '' };
+    } catch (e) { return { ok: false }; }
+  })()`;
+  try {
+    const result = await page.evaluate<{
+      ok: boolean;
+      base64?: string;
+      mimeType?: string;
+    }>(expression);
+    if (!result || result.ok !== true || typeof result.base64 !== 'string') {
+      return null;
+    }
+    const bytes = new Uint8Array(Buffer.from(result.base64, 'base64'));
+    if (bytes.length > maxBytes) {
+      return null;
+    }
+    const mimeType: string =
+      (result.mimeType ?? '').split(';')[0]?.trim() || 'application/octet-stream';
+    return { bytes, mimeType };
+  } catch {
+    return null;
   }
 }
 
@@ -1084,6 +1332,9 @@ async function dispatch(message: WorkerCommandMessage): Promise<void> {
         break;
       case 'captureViewport':
         payload = await handleCaptureViewport(message);
+        break;
+      case 'captureAssets':
+        payload = await handleCaptureAssets(message);
         break;
       default:
         throw Object.assign(new Error('Unsupported command.'), {

@@ -60,7 +60,11 @@ export type AppEventType =
   | 'blueprint.completed'
   | 'clone.started'
   | 'clone.file_generated'
+  | 'clone.asset_downloaded'
+  | 'clone.server_started'
+  | 'clone.server_stopped'
   | 'clone.completed'
+  | 'clone.failed'
   | 'project.started'
   | 'project.file_generated'
   | 'project.completed'
@@ -318,6 +322,54 @@ export interface TechnologyScanCompletedPayload extends BaseEventPayload {
   partial: boolean;
 }
 
+/** Static clone lifecycle (Phase 8). Counts/paths only - never file contents. */
+export interface CloneStartedPayload extends BaseEventPayload {
+  domain: 'clone';
+  scanId: string;
+  pageCount: number;
+}
+
+export interface CloneFileGeneratedPayload extends BaseEventPayload {
+  domain: 'clone';
+  scanId: string;
+  /** Local clone-tree path (never an absolute host path). */
+  file: string;
+}
+
+export interface CloneAssetDownloadedPayload extends BaseEventPayload {
+  domain: 'clone';
+  scanId: string;
+  /** Root-relative clone path of the written asset. */
+  localPath: string;
+  /** Content hash - safe, non-secret. */
+  sha256: string;
+  sizeBytes: number;
+}
+
+export interface CloneServerPayload extends BaseEventPayload {
+  domain: 'clone';
+  /** Loopback preview URL (present when started). */
+  url?: string;
+}
+
+export interface CloneCompletedPayload extends BaseEventPayload {
+  domain: 'clone';
+  scanId: string;
+  generatedPages: number;
+  skippedPages: number;
+  assetsWritten: number;
+  assetsSkipped: number;
+  /** True when some pages/assets could not be captured. */
+  partial: boolean;
+}
+
+export interface CloneFailedPayload extends BaseEventPayload {
+  domain: 'clone';
+  scanId: string | null;
+  code: string;
+  message: string;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
@@ -343,6 +395,13 @@ export interface AppEventPayloadMap {
   'browser.capture_opened': BrowserSessionPayload;
   'browser.capture_closed': BrowserSessionPayload;
   'responsive.captured': ResponsiveCapturedPayload;
+  'clone.started': CloneStartedPayload;
+  'clone.file_generated': CloneFileGeneratedPayload;
+  'clone.asset_downloaded': CloneAssetDownloadedPayload;
+  'clone.server_started': CloneServerPayload;
+  'clone.server_stopped': CloneServerPayload;
+  'clone.completed': CloneCompletedPayload;
+  'clone.failed': CloneFailedPayload;
   'scanner.started': ScannerStartedPayload;
   'scanner.page_discovered': ScannerPageDiscoveredPayload;
   'scanner.page_started': ScannerPageStartedPayload;

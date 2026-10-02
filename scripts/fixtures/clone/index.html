@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Clone fixture - Home</title>
+    <!-- A base tag is present deliberately: CLONE-SPEC requires the rewriter to
+         strip it (unit-tested). It is omitted from the served origin here so the
+         E2E's asset URLs resolve against the fixture, not the base origin. -->
+    <link rel="stylesheet" href="/clone/assets/style.css" />
+    <link rel="icon" href="/clone/assets/logo.svg" />
+    <!-- A known tracking script that the rewriter must strip. -->
+    <script src="https://www.googletagmanager.com/gtag/js?id=G-TEST"></script>
+  </head>
+  <body>
+    <header>
+      <img src="/clone/assets/logo.svg" alt="Fixture logo" />
+      <nav>
+        <a href="/clone/about">About</a>
+        <a href="https://example.com/external">External</a>
+        <a href="/clone/#features">Features</a>
+      </nav>
+    </header>
+    <main>
+      <h1>Clone fixture home</h1>
+      <p>A tiny deterministic page with local assets for the clone engine tests.</p>
+      <img
+        src="/clone/assets/logo.svg"
+        srcset="/clone/assets/logo.svg 1x, /clone/assets/logo.svg 2x"
+        alt="Logo srcset"
+      />
+      <script src="/clone/assets/app.js"></script>
+    </main>
+    <footer>
+      <p>Fixture footer</p>
+    </footer>
+  </body>
+</html>

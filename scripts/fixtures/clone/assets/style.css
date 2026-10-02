@@ -1,0 +1,20 @@
+@charset "utf-8";
+@charset "utf-8";
+
+body {
+  font-family: sans-serif;
+  margin: 0;
+  padding: 1rem;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+header nav a {
+  margin-right: 0.75rem;
+  color: #0284c7;
+}
+
+.hero {
+  /* A font asset referenced from CSS - the rewriter must remap it. */
+  background-image: url("/clone/assets/logo.svg");
+}

@@ -22,6 +22,7 @@ import {
   createMemoryStorageFile,
   type StorageFile
 } from './persistence/storageFile';
+import { AssetRepository } from './repositories/assetRepository';
 import { AuthSessionRepository } from './repositories/authSessionRepository';
 import { ProjectRepository } from './repositories/projectRepository';
 import { ResponsiveCaptureRepository } from './repositories/responsiveCaptureRepository';
@@ -39,6 +40,7 @@ export interface StorageRepositories {
   technologies: TechnologyRepository;
   authSessions: AuthSessionRepository;
   responsiveCaptures: ResponsiveCaptureRepository;
+  assets: AssetRepository;
   settings: SettingsRepository;
 }
 
@@ -66,6 +68,7 @@ function buildRepositories(context: StorageContext): StorageRepositories {
     technologies: new TechnologyRepository(context),
     authSessions: new AuthSessionRepository(context),
     responsiveCaptures: new ResponsiveCaptureRepository(context),
+    assets: new AssetRepository(context),
     settings: new SettingsRepository(context)
   };
 }

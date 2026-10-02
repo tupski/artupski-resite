@@ -15,10 +15,14 @@ import { logger } from '../infra/logger';
 import type { StructuredError } from '../infra/errors';
 import type { ProcessManager } from '../infra/processManager';
 import {
+  MAX_ASSET_BYTES,
+  MAX_ASSET_COUNT,
   MAX_EXTRACT_REDIRECTS,
   type AbortResultPayload,
+  type CaptureAssetsResultPayload,
   type ExtractResultPayload,
   type NormalizedPage,
+  type RawHtmlCapture,
   type PingResultPayload,
   type WorkerCommandPayload,
   type WorkerResultPayload
@@ -112,6 +116,74 @@ export class ScannerWorkerClient {
       return { ok: true, data: payload.page };
     } catch (error) {
       this.log.warn('Extraction failed', { error: String(error) });
+      return { ok: false, error: toScannerError(error) };
+    }
+  }
+
+  /**
+   * Navigate to `url`, extract the normalized page AND the raw HTML body (Phase 8
+   * clone). The HTML is bounded by the worker; `rawHtml` is absent when capture
+   * was not possible.
+   */
+  async extractRawHtml(
+    sessionId: string,
+    url: string,
+    options: ExtractOptions = {}
+  ): Promise<ScannerResult<{ page: NormalizedPage; rawHtml?: RawHtmlCapture }>> {
+    try {
+      const result = await this.adapter.request({
+        command: 'extract',
+        sessionId,
+        url,
+        timeoutMs: options.timeoutMs ?? 30_000,
+        followRedirects: options.followRedirects ?? true,
+        allowedContentTypes: options.allowedContentTypes,
+        maxRedirects: Math.min(options.maxRedirects ?? MAX_EXTRACT_REDIRECTS, MAX_EXTRACT_REDIRECTS),
+        captureHtml: true
+      });
+      const payload = result as ExtractResultPayload;
+      if (payload.command !== 'extract') {
+        return {
+          ok: false,
+          error: createScannerError('INVALID_URL', {
+            message: 'Worker returned an unexpected extract result.'
+          })
+        };
+      }
+      return { ok: true, data: { page: payload.page, rawHtml: payload.rawHtml } };
+    } catch (error) {
+      this.log.warn('Raw HTML extraction failed', { error: String(error) });
+      return { ok: false, error: toScannerError(error) };
+    }
+  }
+
+  /** Capture the referenced assets of `url` for the clone engine (Phase 8). */
+  async captureAssets(
+    sessionId: string,
+    url: string,
+    options: { timeoutMs?: number; maxAssets?: number; maxAssetBytes?: number } = {}
+  ): Promise<ScannerResult<CaptureAssetsResultPayload>> {
+    try {
+      const result = await this.adapter.request({
+        command: 'captureAssets',
+        sessionId,
+        url,
+        timeoutMs: options.timeoutMs ?? 30_000,
+        maxAssets: Math.min(options.maxAssets ?? MAX_ASSET_COUNT, MAX_ASSET_COUNT),
+        maxAssetBytes: Math.min(options.maxAssetBytes ?? MAX_ASSET_BYTES, MAX_ASSET_BYTES)
+      });
+      const payload = result as CaptureAssetsResultPayload;
+      if (payload.command !== 'captureAssets') {
+        return {
+          ok: false,
+          error: createScannerError('INVALID_URL', {
+            message: 'Worker returned an unexpected asset capture result.'
+          })
+        };
+      }
+      return { ok: true, data: payload };
+    } catch (error) {
+      this.log.warn('Asset capture failed', { error: String(error) });
       return { ok: false, error: toScannerError(error) };
     }
   }
