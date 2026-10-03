@@ -35,6 +35,7 @@ import { getPreset } from './presets';
 import { TokenBudgetManager } from './tokenBudget';
 import type { IAIProvider } from '../../types/ai';
 import type { FetchLike } from './provider';
+import { resolveAiFetch } from './tauriFetch';
 
 const log = logger.child('ai');
 
@@ -84,7 +85,10 @@ async function resolveProvider(deps: AiEngineDeps): Promise<{
   }
   const key = await loadAIKey(deps.settings, deps.keychain, config.providerId);
   const apiKey = key.ok ? key.apiKey : null;
-  const provider = createProviderFromConfig(config, apiKey, deps.fetchImpl);
+  // Route through the Tauri HTTP plugin inside the desktop shell so remote
+  // OpenAI-compatible endpoints that lack CORS headers are still reachable.
+  const fetchImpl = deps.fetchImpl ?? (await resolveAiFetch());
+  const provider = createProviderFromConfig(config, apiKey, fetchImpl);
   return { provider, config };
 }
 

@@ -58,6 +58,9 @@ fn runtime_info() -> RuntimeInfo {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // AI provider transport: routes AI HTTP requests through Rust so the
+        // webview is not blocked by a remote endpoint's missing CORS headers.
+        .plugin(tauri_plugin_http::init())
         .manage(process::ProcessRegistry::new())
         .invoke_handler(tauri::generate_handler![
             app_info,

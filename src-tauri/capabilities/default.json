@@ -1,7 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal capability set for the main window. Phase 1/2 exposed no filesystem, shell, or process permissions. Phase 3 adds the app's own `process_spawn` / `process_write` / `process_kill` / `process_status` commands; these are custom app commands (not plugin permissions), so no extra capability is granted here. The only capability remains `core:default`, which is what allows the window to `listen` for the `process://stdout|stderr|exit` events. No tauri-plugin-shell / tauri-plugin-process is installed, and no filesystem or generic-shell permission is granted.",
+  "description": "Minimal capability set for the main window. Phase 1/2 exposed no filesystem, shell, or process permissions. Phase 3 adds the app's own `process_spawn` / `process_write` / `process_kill` / `process_status` commands; these are custom app commands (not plugin permissions), so no extra capability is granted here. `core:default` allows the window to `listen` for `process://stdout|stderr|exit`. `http:default` enables the AI provider transport (requests run in Rust, so remote OpenAI-compatible endpoints without CORS headers are reachable); its scope allows any HTTPS origin plus local HTTP endpoints (Ollama / LM Studio / LocalAI). No tauri-plugin-shell / tauri-plugin-process is installed, and no filesystem or generic-shell permission is granted.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        "https://*",
+        "http://localhost:*",
+        "http://127.0.0.1:*"
+      ]
+    }
+  ]
 }

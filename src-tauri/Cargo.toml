@@ -22,6 +22,11 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Official HTTP client used ONLY as the AI provider transport: requests are
+# executed by the Rust process, so remote OpenAI-compatible endpoints that do
+# not send CORS headers remain reachable from the webview (no browser preflight).
+tauri-plugin-http = "2"
+
 # OS credential store for the AI provider API key (SECURITY.md section 2.1).
 # The platform-specific backends are target-gated by the crate, so the
 # `sync-secret-service` feature only pulls DBus/Secret-Service dependencies on
