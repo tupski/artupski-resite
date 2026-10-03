@@ -72,6 +72,7 @@ import {
   normalizeBlueprintEvidence,
   type BlueprintCaptureLimits
 } from './blueprintCapture.ts';
+import type { StructuredError } from '../../services/infra/errors.ts';
 import { LOGIN_PROBE_EXPRESSION } from '../../services/scanner/extraction/inPageExtractor.ts';
 import { classifyIpLiteral } from '../../services/scanner/security/ipPolicy.ts';
 
@@ -185,12 +186,16 @@ interface ActiveSession {
 const sessions = new Map<string, ActiveSession>();
 let shuttingDown = false;
 
-function write(message: Parameters<typeof serializeMessage>[0]): void {
+function write(message: Parameters<typeof serializeMessage>[0]): boolean {
   try {
     process.stdout.write(serializeMessage(message));
+    return true;
   } catch {
     // A frame that cannot be serialized is dropped rather than crashing the
-    // worker; the host's request timeout will surface the failure.
+    // worker. Callers that MUST deliver a terminal reply (see `dispatch`) use
+    // the return value to fall back to a bounded error frame so the host is
+    // never left waiting for a reply that can no longer be produced.
+    return false;
   }
 }
 
@@ -1420,10 +1425,42 @@ async function handleCaptureViewport(message: WorkerCommandMessage): Promise<Wor
   }
 }
 
+/**
+ * Post a terminal result frame for `id`. Every command path funnels through here
+ * so a command ALWAYS produces exactly one terminal reply. If the primary frame
+ * cannot be serialized (it exceeds `MAX_FRAME_BYTES`), a bounded error frame is
+ * sent instead of silently dropping it - otherwise the host would wait for a
+ * reply that never arrives and report a timeout.
+ */
+function writeResult(
+  id: string,
+  command: string,
+  payload: WorkerResultPayload,
+  error?: StructuredError
+): void {
+  if (write(createResultMessage(id, payload, error))) {
+    return;
+  }
+  log('error', `${command} result exceeded the frame budget; sending a bounded error instead.`);
+  write(
+    createResultMessage(id, { command } as WorkerResultPayload, {
+      code: 'WORKER_PROTOCOL_VIOLATION' as never,
+      category: 'browser',
+      message: 'The worker produced a result too large to send in a single frame.',
+      severity: 'error',
+      recoverable: true,
+      retryable: false,
+      suggestedAction: 'Reduce the capture size and retry.',
+      timestamp: new Date().toISOString()
+    })
+  );
+}
+
 async function dispatch(message: WorkerCommandMessage): Promise<void> {
+  const command = message.payload.command;
   try {
     let payload: WorkerResultPayload;
-    switch (message.payload.command) {
+    switch (command) {
       case 'ping':
         payload = await handlePing();
         break;
@@ -1462,7 +1499,7 @@ async function dispatch(message: WorkerCommandMessage): Promise<void> {
           code: 'WORKER_PROTOCOL_VIOLATION'
         });
     }
-    write(createResultMessage(message.id, payload));
+    writeResult(message.id, command, payload);
   } catch (error) {
     const code =
       typeof error === 'object' &&
@@ -1472,19 +1509,17 @@ async function dispatch(message: WorkerCommandMessage): Promise<void> {
         ? error.code
         : 'PLAYWRIGHT_CRASHED';
     const text = error instanceof Error ? error.message : 'Worker command failed.';
-    log('error', `${message.payload.command} failed: ${text}`);
-    write(
-      createResultMessage(message.id, { command: message.payload.command } as WorkerResultPayload, {
-        code: code as never,
-        category: 'browser',
-        message: text,
-        severity: 'error',
-        recoverable: true,
-        retryable: false,
-        suggestedAction: 'Retry the browser operation.',
-        timestamp: new Date().toISOString()
-      })
-    );
+    log('error', `${command} failed: ${text}`);
+    writeResult(message.id, command, { command } as WorkerResultPayload, {
+      code: code as never,
+      category: 'browser',
+      message: text,
+      severity: 'error',
+      recoverable: true,
+      retryable: false,
+      suggestedAction: 'Retry the browser operation.',
+      timestamp: new Date().toISOString()
+    });
   }
 }
 

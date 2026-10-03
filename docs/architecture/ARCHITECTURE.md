@@ -136,6 +136,29 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
 - **Deferred**: production reader/writer wiring (native sandbox + destination picker) and the
   UI-SPEC §2.9 export screen.
 
+### 3.4d AI Blueprint Documentation Engine (as built)
+- Generates the project documentation set from a validated Blueprint using the configured AI provider
+  for narrative sections, with deterministic, data-derived sections generated locally.
+- **Seam**: `src/services/blueprint/docs/` — `catalog.ts` (document identity + relevance rules +
+  plan), `templates.ts` (deterministic Markdown builders), `prompt.ts` (per-document defensive prompt +
+  bounded payload), `generate.ts` (`generateBlueprintDocs` orchestrator), `runBlueprintDocs.ts`
+  (persisted-Blueprint entrypoint). Types live in `src/types/blueprintDocs.ts`; decisions are recorded
+  in `src/services/blueprint/docs/README-DECISIONS.md`.
+- **Document set**: 7 required docs (`AGENTS.md`, `PRD.md`, `ARCHITECTURE.md`, `PLAN.md`, `UI-SPEC.md`,
+  `ASSETS.md`, `TESTING.md`) plus 4 optional docs (`DATABASE.md`, `API.md`, `SECURITY.md`,
+  `DEPLOYMENT.md`) selected from real evidence (endpoints, entities, auth, infrastructure) and/or an
+  explicit opt-in toggle. `TESTING.md` is required-tier but suppressible.
+- **AI usage**: the model contributes only a bounded `Summary (AI-assisted)` section; every table, token
+  value, route list, and asset inventory is generated locally. The prompt is pre-checked with
+  `TokenBudgetManager`, the payload is wrapped in `<DATA_PAYLOAD>`, and a per-document AI failure degrades
+  to the deterministic document with a bounded warning (never failing the run).
+- **Wiring**: `generateProject` accepts `docs?: ProjectDocInput[]` and writes them at the project root
+  (path-safe, de-duplicated); `exportProject` prefers project-provided docs so a generated
+  `ARCHITECTURE.md` never collides with the exporter's own document. The UI (`BlueprintPanel` +
+  `blueprintStore.generateDocs`) previews the planned set and each document's status. No new worker, no
+  Rust command, `WORKER_PROTOCOL_VERSION` unchanged.
+- **Deferred**: persisting the docs set alongside the Blueprint document (currently generated on demand).
+
 ### 3.5 Local Storage Subsystem
 - SQLite embedded database.
 - Stores project metadata, scan runs, captured assets, blueprints, settings, and logs.
@@ -176,7 +199,7 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
 Phase 3 established the process boundary and a **launch/navigate-only** browser runtime. Extraction/analysis is Phase 4.
 
 - **Process boundary**: `src-tauri/src/process.rs` spawns the worker with `std::process::Command` (array args, no shell) and exposes four narrow commands: `process_spawn`, `process_write`, `process_kill`, `process_status`. The executable is allowlisted (`node`), arguments are validated, the environment is sanitized, and stdout/stderr stream as bounded lines over `process://stdout|stderr|exit` events.
-- **Lifecycle (TS)**: `src/services/infra/processManager.ts` owns a guarded state machine (`not_started → starting → ready ⇄ busy → stopping → stopped`, plus `failed`), duplicate-start prevention, startup/communication timeouts (≤30s), graceful-then-forced shutdown, unexpected-exit handling, and bounded buffering. It is injectable via `ProcessSpawner` (Rust IPC in prod, fake in tests).
+- **Lifecycle (TS)**: `src/services/infra/processManager.ts` owns a guarded state machine (`not_started → starting → ready ⇄ busy → stopping → stopped`, plus `failed` and an explicit `restarting` recovery state), duplicate-start prevention, a bounded startup timeout (≤30s) and communication timeout (default 10 min so a large screenshot reply is never reaped early), `restart()`/`ensureReady()` recovery from `failed`, graceful-then-forced shutdown, unexpected-exit handling, and bounded buffering. It is injectable via `ProcessSpawner` (Rust IPC in prod, fake in tests).
 - **Protocol**: `src/services/infra/workerProtocol.ts` (shared with the worker via `src/workers/crawler/protocol.ts`) - versioned envelopes, correlation ids, deterministic JSON, runtime validation.
 - **Browser runtime**: `src/services/browser/browserRuntime.ts` - detection/diagnostics without download, Chromium-only MVP, controlled launch/navigate/close. Non-blocking init from `App.tsx`; a missing browser is reported as `BROWSER_NOT_INSTALLED` and never blocks the UI.
 - **Worker**: `src/workers/crawler/index.ts` runs via Node's native TypeScript stripping (`--experimental-strip-types`) and supports `ping` / `launch` / `navigate` / `close` / `extract` / `abort` / `detectLogin` / `captureState` / `captureViewport` / `captureAssets`. A second managed worker, `src/workers/cloneServer/`, serves the static clone (`serveClone` / `stopClone`).

@@ -136,6 +136,18 @@ export function safeHookFileName(fileName: string, name: string): string {
 }
 
 /**
+ * Sanitize a generated documentation file name to a safe `*.md` basename at the
+ * project root. Any path separators are stripped and a non-`.md` name is
+ * coerced, so a Blueprint-derived name can never escape the root.
+ */
+export function safeDocFileName(name: string): string {
+  const base = name.split(/[\\/]/).pop()?.trim() ?? '';
+  const withoutExt = base.replace(/\.md$/i, '');
+  const stem = slugifyPathSegment(withoutExt === '' ? 'doc' : withoutExt).toUpperCase();
+  return `${stem}.md`;
+}
+
+/**
  * Derive a safe, collision-free asset path under `public/assets`. The caller
  * supplies a hint (BluePrint `local_path` or a logical name); the basename is
  * slugified and the extension is preserved or derived from the MIME type.

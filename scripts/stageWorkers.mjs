@@ -26,7 +26,8 @@
  * Output is deterministic and safe to re-run (the resources tree is rebuilt).
  */
 import { existsSync } from 'node:fs';
-import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -39,6 +40,67 @@ const WORKERS = [
   { name: 'crawler', entry: join(ROOT, 'src', 'workers', 'crawler', 'index.ts') },
   { name: 'cloneServer', entry: join(ROOT, 'src', 'workers', 'cloneServer', 'index.ts') }
 ];
+
+/** Source of the shared protocol version/command set (parsed, never imported). */
+const PROTOCOL_SOURCE = join(ROOT, 'src', 'services', 'infra', 'workerProtocol.ts');
+
+/**
+ * Read the protocol version and command names from the TypeScript source.
+ *
+ * A packaged app ships only the bundled `.js`, so a bundle staged from an older
+ * checkout can silently speak a different protocol than the webview expects
+ * (the reported "malformed or unsupported message / version mismatch"). Parsing
+ * the source here lets the build FAIL loudly instead of shipping a stale bundle.
+ */
+async function readProtocolContract() {
+  const source = await readFile(PROTOCOL_SOURCE, 'utf8');
+  const versionMatch = source.match(/WORKER_PROTOCOL_VERSION\s*=\s*(\d+)/);
+  if (!versionMatch) {
+    throw new Error(`Could not find WORKER_PROTOCOL_VERSION in ${PROTOCOL_SOURCE}.`);
+  }
+  const version = Number(versionMatch[1]);
+  const commands = [...source.matchAll(/^\s*'([a-zA-Z]+)'/gm)]
+    .map((match) => match[1])
+    .filter((name) =>
+      [
+        'ping',
+        'launch',
+        'navigate',
+        'close',
+        'extract',
+        'abort',
+        'detectLogin',
+        'captureState',
+        'captureViewport',
+        'captureAssets',
+        'captureBlueprint',
+        'serveClone',
+        'stopClone'
+      ].includes(name)
+    );
+  return { version, commands: [...new Set(commands)] };
+}
+
+/**
+ * Verify a freshly-built bundle actually contains the current protocol version
+ * and every command name. Throws (failing the build) when the bundle is stale.
+ */
+async function verifyBundle(bundlePath, contract) {
+  const text = await readFile(bundlePath, 'utf8');
+  if (!new RegExp(`WORKER_PROTOCOL_VERSION\\s*=\\s*${contract.version}\\b`).test(text)) {
+    throw new Error(
+      `Staged bundle ${bundlePath} does not carry protocol version ${contract.version}; it is stale.`
+    );
+  }
+  const missing = contract.commands.filter((name) => !text.includes(`"${name}"`));
+  if (missing.length > 0) {
+    throw new Error(
+      `Staged bundle ${bundlePath} is missing command(s) ${missing.join(', ')}; it is stale.`
+    );
+  }
+  const sha256 = createHash('sha256').update(text).digest('hex').slice(0, 16);
+  return { sha256, bytes: Buffer.byteLength(text, 'utf8') };
+}
 
 /** Runtime dependencies that must sit next to the workers (never inlined). */
 const EXTERNAL_PACKAGES = ['playwright-core'];
@@ -53,6 +115,11 @@ async function main() {
     );
   }
 
+  const contract = await readProtocolContract();
+  console.log(
+    `[stageWorkers] protocol v${contract.version} (${contract.commands.length} commands)`
+  );
+
   // Rebuild from scratch so a removed worker never lingers in the bundle.
   await rm(RESOURCES, { recursive: true, force: true });
   await mkdir(join(RESOURCES, 'workers'), { recursive: true });
@@ -63,9 +130,10 @@ async function main() {
     }
     const outDir = join(RESOURCES, 'workers', worker.name);
     await mkdir(outDir, { recursive: true });
+    const outfile = join(outDir, 'index.js');
     await esbuild.build({
       entryPoints: [worker.entry],
-      outfile: join(outDir, 'index.js'),
+      outfile,
       bundle: true,
       platform: 'node',
       format: 'cjs',
@@ -78,7 +146,10 @@ async function main() {
     // The bundle is CommonJS; the repo root package.json is `"type": "module"`,
     // so mark the worker directory explicitly as CommonJS.
     await writeFile(join(outDir, 'package.json'), `${JSON.stringify({ type: 'commonjs' }, null, 2)}\n`);
-    console.log(`[stageWorkers] staged workers/${worker.name}/index.js`);
+    const integrity = await verifyBundle(outfile, contract);
+    console.log(
+      `[stageWorkers] staged workers/${worker.name}/index.js (${integrity.bytes} bytes, sha256:${integrity.sha256})`
+    );
   }
 
   // Copy the external runtime dependencies beside the workers.

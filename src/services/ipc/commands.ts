@@ -575,6 +575,87 @@ export async function blueprintExport(
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Blueprint documentation commands                                           */
+/* -------------------------------------------------------------------------- */
+
+/** Options for `blueprintGenerateDocs` (all optional; relevance is default). */
+export interface BlueprintDocsGenerateOptions {
+  include?: Partial<Record<'DATABASE.md' | 'API.md' | 'SECURITY.md' | 'DEPLOYMENT.md', boolean>>;
+  exclude?: readonly ('DATABASE.md' | 'API.md' | 'SECURITY.md' | 'DEPLOYMENT.md')[];
+  includeTesting?: boolean;
+  useAi?: boolean;
+}
+
+/** One generated document, projected for the UI. */
+export interface BlueprintDocsDocResult {
+  name: string;
+  title: string;
+  bytes: number;
+  source: 'deterministic' | 'ai';
+  selectionReason: 'required' | 'relevant' | 'opted_in';
+  warnings: string[];
+  contents: string;
+}
+
+export interface BlueprintDocsGenerateResult {
+  docs: BlueprintDocsDocResult[];
+  warnings: Array<{ doc: string; code: string; message: string }>;
+  skipped: Array<{ name: string; title: string; required: boolean }>;
+}
+
+/**
+ * Generate the AI-powered documentation set for the latest persisted Blueprint
+ * of a scan. A thin wrapper over `runBlueprintDocs`; never throws and never
+ * changes a scan's terminal status.
+ */
+export async function blueprintGenerateDocs(
+  scanId: string,
+  options?: BlueprintDocsGenerateOptions
+): Promise<IpcResult<BlueprintDocsGenerateResult>> {
+  try {
+    const { runBlueprintDocs } = await import('../blueprint/docs');
+    const result = await runBlueprintDocs({
+      scanId,
+      ...(options ? { options } : {})
+    });
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+    return {
+      ok: true,
+      data: {
+        docs: result.data.docs.map((doc) => ({
+          name: doc.name,
+          title: doc.title,
+          bytes: doc.bytes,
+          source: doc.source,
+          selectionReason: doc.selectionReason,
+          warnings: [...doc.warnings],
+          contents: doc.contents
+        })),
+        warnings: result.data.warnings.map((warning) => ({ ...warning })),
+        skipped: result.data.skipped.map((entry) => ({
+          name: entry.name,
+          title: entry.title,
+          required: entry.required
+        }))
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: toStructuredError(error, {
+        code: 'BLUEPRINT_VALIDATION_FAILED',
+        category: 'blueprint',
+        message: 'Failed to generate the blueprint documentation.',
+        recoverable: true,
+        retryable: true
+      })
+    };
+  }
+}
+
 /** Payload of the Rust `process://stdout` / `process://stderr` events. */
 export interface ProcessStreamEvent {
   id: string;

@@ -127,8 +127,13 @@ export function ScanRoute() {
   const blueprintLoading = useBlueprintStore((state) => state.loading);
   const blueprintGenerating = useBlueprintStore((state) => state.generating);
   const blueprintError = useBlueprintStore((state) => state.error);
+  const blueprintDocs = useBlueprintStore((state) => state.docs);
+  const blueprintDocsSkipped = useBlueprintStore((state) => state.docsSkipped);
+  const blueprintDocsWarnings = useBlueprintStore((state) => state.docsWarnings);
+  const blueprintGeneratingDocs = useBlueprintStore((state) => state.generatingDocs);
   const loadBlueprint = useBlueprintStore((state) => state.loadForScan);
   const generateBlueprint = useBlueprintStore((state) => state.generate);
+  const generateBlueprintDocs = useBlueprintStore((state) => state.generateDocs);
   const exportBlueprintJson = useBlueprintStore((state) => state.exportJson);
   const clearBlueprint = useBlueprintStore((state) => state.clear);
 
@@ -877,6 +882,11 @@ export function ScanRoute() {
               canGenerate={status === 'completed'}
               onGenerate={() => void handleGenerateBlueprint()}
               onExport={() => void handleExportBlueprint()}
+              docs={blueprintDocs}
+              docsSkipped={blueprintDocsSkipped}
+              docsWarnings={blueprintDocsWarnings}
+              generatingDocs={blueprintGeneratingDocs}
+              onGenerateDocs={() => void generateBlueprintDocs()}
             />
           </Panel>
         ) : null}

@@ -25,6 +25,7 @@ export {
   blueprintGenerate,
   blueprintGetLatest,
   blueprintExport,
+  blueprintGenerateDocs,
   onProcessEvent
 } from './commands';
 export type {
@@ -38,5 +39,8 @@ export type {
   ProcessExitEvent,
   BlueprintGenerateArgs,
   BlueprintGenerateResult,
-  BlueprintExportResult
+  BlueprintExportResult,
+  BlueprintDocsGenerateOptions,
+  BlueprintDocsGenerateResult,
+  BlueprintDocsDocResult
 } from './commands';

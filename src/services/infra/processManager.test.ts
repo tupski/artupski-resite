@@ -370,6 +370,100 @@ describe('ProcessManager cleanup after failure', () => {
   });
 });
 
+describe('ProcessManager failure recovery (lifecycle fix)', () => {
+  it('recovers a timed-out worker via ensureReady and accepts the next command', async () => {
+    const spawner = new FakeSpawner();
+    const manager = makeManager(spawner);
+    await manager.start();
+
+    // Silence the fake so the request times out; a timeout must reap the worker
+    // and leave it in `failed` (not half-busy).
+    const fake = (manager as unknown as { handle: FakeProcess }).handle;
+    const spy = vi.spyOn(fake, 'write').mockImplementation(() => undefined);
+    await expect(manager.request({ command: 'ping' }, 20)).rejects.toSatisfy(
+      (error) => errorCode(error) === 'PROCESS_TIMEOUT'
+    );
+    spy.mockRestore();
+
+    expect(manager.getState()).toBe('failed');
+    expect(spawner.spawnCount).toBe(1);
+
+    // The failed-state lockout is recovered transparently: a fresh process is
+    // spawned and the next command is accepted.
+    await manager.ensureReady();
+    expect(manager.getState()).toBe('ready');
+    expect(spawner.spawnCount).toBe(2);
+
+    const result = await manager.request({ command: 'ping' });
+    expect(result.command).toBe('ping');
+    await manager.stop();
+  });
+
+  it('restart() walks failed -> restarting -> starting -> ready', async () => {
+    const spawner = new FakeSpawner();
+    const manager = makeManager(spawner);
+    await manager.start();
+
+    const states: string[] = [];
+    manager.onStateChange((state) => states.push(state));
+
+    spawner.lastProcess?.emitExit({ code: 1, signal: null });
+    await Promise.resolve();
+    expect(manager.getState()).toBe('failed');
+
+    await manager.restart();
+    expect(manager.getState()).toBe('ready');
+    expect(states).toContain('restarting');
+    expect(states).toContain('starting');
+    expect(spawner.spawnCount).toBe(2);
+    await manager.stop();
+  });
+
+  it('ensureReady is a no-op on a healthy worker', async () => {
+    const spawner = new FakeSpawner();
+    const manager = makeManager(spawner);
+    await manager.start();
+
+    await manager.ensureReady();
+    expect(spawner.spawnCount).toBe(1);
+    expect(manager.getState()).toBe('ready');
+    await manager.stop();
+  });
+
+  it('shares a single spawn across concurrent ensureReady/restart calls', async () => {
+    const spawner = new FakeSpawner();
+    const manager = makeManager(spawner);
+    await manager.start();
+
+    spawner.lastProcess?.emitExit({ code: 1, signal: null });
+    await Promise.resolve();
+    expect(manager.getState()).toBe('failed');
+
+    await Promise.all([manager.ensureReady(), manager.restart(), manager.ensureReady()]);
+
+    expect(manager.getState()).toBe('ready');
+    expect(spawner.spawnCount).toBe(2);
+    await manager.stop();
+  });
+
+  it('ensureReady recovers a worker that failed during startup', async () => {
+    const spawner = new FakeSpawner({ behavior: 'spawn-error' });
+    const manager = makeManager(spawner);
+
+    await expect(manager.start()).rejects.toSatisfy(
+      (error) => errorCode(error) === 'PROCESS_SPAWN_FAILED'
+    );
+    expect(manager.getState()).toBe('failed');
+
+    // A subsequent explicit restart is still attempted (and fails again here),
+    // proving the worker is not permanently locked out of recovery.
+    await expect(manager.ensureReady()).rejects.toSatisfy(
+      (error) => errorCode(error) === 'PROCESS_SPAWN_FAILED'
+    );
+    expect(spawner.spawnCount).toBe(2);
+  });
+});
+
 describe('ProcessManager kill latency (TESTING.md Scenario 3)', () => {
   it('reaps a worker within 500ms of requesting a stop', async () => {
     const spawner = new FakeSpawner({ killDelayMs: 20 });

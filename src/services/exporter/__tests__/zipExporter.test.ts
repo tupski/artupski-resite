@@ -257,6 +257,22 @@ describe('exportProject events', () => {
   });
 });
 
+describe('exportProject documentation precedence', () => {
+  it('lets project-provided docs win without a duplicate-entry failure', async () => {
+    const report = sampleReport({ files: [...sampleReport().files, 'AGENTS.md', 'ARCHITECTURE.md'] });
+    const { reader, writer, written } = createMemoryIo(report);
+    const result = await exportProject({ reader, writer }, baseRequest(report));
+
+    expect(result.ok).toBe(true);
+    // The generator's own ARCHITECTURE.md is dropped (the project one wins) so
+    // only README.md and COMPONENTS.md are added; AGENTS.md is project-provided.
+    expect(result.docs.map((doc) => doc.name)).toEqual(['README.md', 'COMPONENTS.md']);
+    const archive = readZip(written.get('acme-saas-platform.zip')!);
+    expect(archive.data.has('AGENTS.md')).toBe(true);
+    expect(new TextDecoder().decode(archive.data.get('AGENTS.md'))).toContain('contents of AGENTS.md');
+  });
+});
+
 describe('exportProject unavailable deps', () => {
   it('refuses to run without an injected reader/writer', async () => {
     const result = await exportProject({}, baseRequest());

@@ -348,13 +348,21 @@ export async function exportProject(
   }
 
   // --- 5. Generate docs (pure) and detect duplicate / case-colliding entries. --
-  const docResult = generateDocs({
+  // Project-provided docs (e.g. the AI-generated blueprint documentation set)
+  // win: any generated doc whose name already exists among the source files is
+  // dropped so the run can never fail on a duplicate document.
+  const sourceNameSet = new Set(sourcePaths.map((path) => path.toLowerCase()));
+  const generatedDocs = generateDocs({
     projectName: request.projectName,
     targetFramework: request.targetFramework,
     report: request.report,
     ...(request.targetUrl !== undefined ? { targetUrl: request.targetUrl } : {}),
     ...(request.description !== undefined ? { description: request.description } : {})
   });
+  const docResult = {
+    ...generatedDocs,
+    docs: generatedDocs.docs.filter((doc) => !sourceNameSet.has(doc.name.toLowerCase()))
+  };
 
   const allNames = [...sourcePaths, ...docResult.docs.map((doc) => doc.name)];
   const collision = findCaseCollision(allNames);

@@ -97,6 +97,7 @@ export type AppEventType =
   | 'process.spawning'
   | 'process.ready'
   | 'process.busy'
+  | 'process.restarting'
   | 'process.stopping'
   | 'process.stopped'
   | 'process.exited'
@@ -704,6 +705,7 @@ export interface AppEventPayloadMap {
   'process.spawning': ProcessLifecyclePayload;
   'process.ready': ProcessLifecyclePayload;
   'process.busy': ProcessLifecyclePayload;
+  'process.restarting': ProcessLifecyclePayload;
   'process.stopping': ProcessLifecyclePayload;
   'process.stopped': ProcessLifecyclePayload;
   'process.exited': ProcessExitedPayload;

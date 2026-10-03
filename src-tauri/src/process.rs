@@ -42,8 +42,13 @@ const ALLOWED_EXECUTABLES: &[&str] = &["node", "node.exe"];
 /// Maximum length of a single argument (8 KiB).
 const MAX_ARG_BYTES: usize = 8 * 1024;
 
-/// Maximum length of a single stdout/stderr line emitted to the frontend (64 KiB).
-const MAX_LINE_BYTES: usize = 64 * 1024;
+/// Maximum length of a single stdout/stderr line emitted to the frontend (64 MiB).
+///
+/// This MUST be >= the TypeScript `MAX_FRAME_BYTES` (64 MiB) so a large but
+/// legitimate worker frame (e.g. a base64 `captureViewport` screenshot) is never
+/// truncated mid-JSON. An earlier 64 KiB cap corrupted every large frame, which
+/// the host then reported as a "malformed or unsupported message".
+const MAX_LINE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Maximum length of a single stdin write accepted from the frontend (1 MiB).
 const MAX_WRITE_BYTES: usize = 1024 * 1024;

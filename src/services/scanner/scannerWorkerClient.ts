@@ -63,7 +63,12 @@ export class ProcessManagerScannerWorker implements ScannerWorkerAdapter {
     return this.manager.getState();
   }
 
-  request(command: WorkerCommandPayload, timeoutMs?: number): Promise<WorkerResultPayload> {
+  async request(command: WorkerCommandPayload, timeoutMs?: number): Promise<WorkerResultPayload> {
+    // Recover a worker that entered `failed` (crash/timeout/protocol violation)
+    // before sending: this is the documented restart path, so a transient failure
+    // never permanently locks the crawler out with "Cannot send a command while
+    // it is failed". A healthy/`ready` worker is unaffected (a no-op).
+    await this.manager.ensureReady();
     return this.manager.request(command, timeoutMs);
   }
 }

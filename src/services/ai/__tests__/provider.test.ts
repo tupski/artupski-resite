@@ -204,6 +204,32 @@ describe('OpenAICompatibleProvider transport failures', () => {
     });
   });
 
+  it('maps a browser "Failed to fetch" TypeError to a retryable IPC_ERROR (not an Illegal invocation)', async () => {
+    // A cross-origin request blocked by the webview (e.g. a missing CSP
+    // `connect-src`) rejects with `TypeError: Failed to fetch`. That is a
+    // reachability/transport failure, NOT a detached-fetch binding bug, so the
+    // guidance must still point at the endpoint.
+    const fetchImpl: FetchLike = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    try {
+      await provider.chatCompletion([{ role: 'user', content: 'hi' }]);
+      throw new Error('expected chatCompletion to reject');
+    } catch (error) {
+      const structured = error as {
+        code: string;
+        message: string;
+        retryable: boolean;
+        suggestedAction: string;
+      };
+      expect(structured.code).toBe('IPC_ERROR');
+      expect(structured.retryable).toBe(true);
+      expect(structured.message).not.toContain('Illegal invocation');
+      expect(structured.suggestedAction.toLowerCase()).toContain('reachable');
+    }
+  });
+
   it('maps a timeout (AbortError) to CONNECTION_TIMED_OUT', async () => {
     const fetchImpl: FetchLike = async () => {
       const err = new Error('aborted');

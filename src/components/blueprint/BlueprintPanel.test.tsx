@@ -280,4 +280,61 @@ describe('BlueprintPanel', () => {
     render(<BlueprintPanel {...props()} />);
     expect(screen.getByRole('button', { name: 'Export Blueprint JSON' })).toBeDisabled();
   });
+
+  it('shows the planned documentation set derived from the loaded document', () => {
+    render(
+      <BlueprintPanel
+        {...props({
+          status: 'ready',
+          record: record(),
+          document: document_(),
+          isValid: true
+        })}
+      />
+    );
+    expect(screen.getByText('Documentation (7 docs)')).toBeInTheDocument();
+    expect(screen.getByText('AGENTS.md')).toBeInTheDocument();
+    expect(screen.getByText('TESTING.md')).toBeInTheDocument();
+    // Required docs are marked; none are generated yet.
+    expect(screen.getAllByText('Required').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Pending').length).toBeGreaterThan(0);
+  });
+
+  it('wires the generate-docs action and reflects generated status', async () => {
+    const onGenerateDocs = vi.fn();
+    render(
+      <BlueprintPanel
+        {...props({
+          status: 'ready',
+          record: record(),
+          document: document_(),
+          isValid: true,
+          onGenerateDocs,
+          docs: [
+            {
+              name: 'AGENTS.md',
+              title: 'AGENTS',
+              bytes: 120,
+              source: 'ai',
+              selectionReason: 'required',
+              warnings: [],
+              contents: '# AGENTS\n'
+            }
+          ],
+          docsWarnings: [
+            { doc: 'PRD.md', code: 'API_KEY_INVALID', message: 'AI narrative for PRD.md was unavailable.' }
+          ]
+        })}
+      />
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Generate docs' }));
+    expect(onGenerateDocs).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('AI')).toBeInTheDocument();
+    expect(screen.getByText(/AI narrative for PRD.md was unavailable/)).toBeInTheDocument();
+  });
+
+  it('does not render a documentation plan without a loaded document', () => {
+    render(<BlueprintPanel {...props({ status: 'empty' })} />);
+    expect(screen.queryByText(/^Documentation \(/)).not.toBeInTheDocument();
+  });
 });

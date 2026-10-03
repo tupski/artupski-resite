@@ -33,8 +33,30 @@ export type { NormalizedPage };
  */
 export const WORKER_PROTOCOL_VERSION = 1;
 
-/** Maximum size of a single serialized frame (1 MiB) to bound buffering. */
-export const MAX_FRAME_BYTES = 1024 * 1024;
+/**
+ * Maximum size of a single serialized frame (64 MiB) to bound buffering.
+ *
+ * This MUST exceed the largest legitimate result payload - a `captureViewport`
+ * screenshot is capped at `MAX_SCREENSHOT_BASE64_BYTES` (12 MiB of base64), which
+ * itself can be up to 16 MiB when the PNG was decoded and re-encoded, and a
+ * `captureBlueprint` document can reach `MAX_BLUEPRINT_BYTES` (4 MiB). An earlier
+ * 1 MiB cap was smaller than a single screenshot, so `serializeMessage()` threw
+ * on the worker's only terminal reply: the host never received a `result` and the
+ * command timed out at 30s. 64 MiB leaves headroom for the largest frame plus the
+ * envelope while still bounding a runaway worker.
+ */
+export const MAX_FRAME_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Maximum size of one stdout/stderr line crossing the native bridge.
+ *
+ * The Rust process layer streams stdout one line per event and truncates a line
+ * to this many bytes. It MUST be >= `MAX_FRAME_BYTES` so a large but legitimate
+ * frame is never cut mid-JSON (which the host would otherwise report as a
+ * "malformed or unsupported message"). Kept here as the single source of truth;
+ * `src-tauri/src/process.rs::MAX_LINE_BYTES` must stay in sync.
+ */
+export const MAX_LINE_BYTES = 64 * 1024 * 1024;
 
 export type WorkerMessageType = 'command' | 'result' | 'event' | 'log' | 'error';
 
@@ -1256,6 +1278,228 @@ function validatePayload(type: WorkerMessageType, payload: unknown): boolean {
 }
 
 /**
+ * Describe *which* required field is missing or malformed for a command/result
+ * payload, so a protocol failure names the offending field instead of a generic
+ * "Invalid payload" (the caller can then act on it rather than guess at a version
+ * mismatch). Returns a human-readable clause, or `null` when every checked field
+ * is present and well-typed.
+ *
+ * This is intentionally a *diagnostic* layer: `validateCommandPayload` /
+ * `validateResultPayload` remain the authoritative accept/reject gate, so the two
+ * can never disagree on validity.
+ */
+function describePayloadProblem(type: WorkerMessageType, payload: unknown): string | null {
+  if (!isRecord(payload)) {
+    return 'the payload is not a JSON object';
+  }
+  const command = payload.command;
+  if (!isCommandName(command)) {
+    return `unknown or missing command discriminator "${String(command)}"`;
+  }
+
+  const missing = (field: string): string => `missing or invalid "${field}"`;
+  const badProfile = (): string => 'invalid "profile" (name/width/height/scale/... out of range)';
+
+  if (type === 'command') {
+    switch (command) {
+      case 'ping':
+        return null;
+      case 'launch':
+        if (payload.engine !== 'chromium') return 'invalid "engine" (expected "chromium")';
+        if (typeof payload.headless !== 'boolean') return missing('headless');
+        if (payload.capture === true && payload.headless !== false) {
+          return 'a capture session must be headed (headless:false)';
+        }
+        if (payload.capture === true && payload.authState !== undefined) {
+          return 'a capture session must not carry an "authState"';
+        }
+        if (payload.executablePath !== undefined && !isNonEmptyString(payload.executablePath)) {
+          return missing('executablePath');
+        }
+        if (payload.authState !== undefined && !isAuthStorageState(payload.authState)) {
+          return 'invalid "authState" storage state';
+        }
+        return null;
+      case 'navigate':
+      case 'detectLogin':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (typeof payload.timeoutMs !== 'number' || !Number.isFinite(payload.timeoutMs)) {
+          return missing('timeoutMs');
+        }
+        return null;
+      case 'close':
+      case 'abort':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        return null;
+      case 'extract':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (typeof payload.timeoutMs !== 'number' || !Number.isFinite(payload.timeoutMs)) {
+          return missing('timeoutMs');
+        }
+        if (payload.maxRedirects !== undefined && !Number.isInteger(payload.maxRedirects)) {
+          return missing('maxRedirects');
+        }
+        if (payload.allowedContentTypes !== undefined && !Array.isArray(payload.allowedContentTypes)) {
+          return missing('allowedContentTypes');
+        }
+        if (payload.captureHtml !== undefined && typeof payload.captureHtml !== 'boolean') {
+          return missing('captureHtml');
+        }
+        return null;
+      case 'captureState':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.scopeHost)) return missing('scopeHost');
+        return null;
+      case 'captureViewport':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (typeof payload.timeoutMs !== 'number' || !Number.isFinite(payload.timeoutMs)) {
+          return missing('timeoutMs');
+        }
+        if (!isViewportProfile(payload.profile)) return badProfile();
+        return null;
+      case 'captureAssets':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (typeof payload.timeoutMs !== 'number' || !Number.isFinite(payload.timeoutMs)) {
+          return missing('timeoutMs');
+        }
+        if (payload.maxAssets !== undefined && !Number.isInteger(payload.maxAssets)) {
+          return missing('maxAssets');
+        }
+        if (payload.maxAssetBytes !== undefined && !Number.isInteger(payload.maxAssetBytes)) {
+          return missing('maxAssetBytes');
+        }
+        return null;
+      case 'captureBlueprint':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (typeof payload.timeoutMs !== 'number' || !Number.isFinite(payload.timeoutMs)) {
+          return missing('timeoutMs');
+        }
+        if (payload.maxNodes !== undefined && !Number.isInteger(payload.maxNodes)) {
+          return missing('maxNodes');
+        }
+        if (payload.maxBytes !== undefined && !Number.isInteger(payload.maxBytes)) {
+          return missing('maxBytes');
+        }
+        return null;
+      case 'serveClone':
+        if (!isNonEmptyString(payload.root)) return missing('root');
+        if (payload.port !== undefined && !Number.isInteger(payload.port)) return missing('port');
+        return null;
+      case 'stopClone':
+        return null;
+      default:
+        return null;
+    }
+  }
+
+  if (type === 'result') {
+    switch (command) {
+      case 'ping':
+        if (payload.pong !== true) return missing('pong');
+        if (!isNonEmptyString(payload.workerVersion)) return missing('workerVersion');
+        return null;
+      case 'launch':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (payload.engine !== 'chromium') return 'invalid "engine" (expected "chromium")';
+        if (!isNonEmptyString(payload.version)) return missing('version');
+        return null;
+      case 'navigate':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (payload.status !== null && typeof payload.status !== 'number') return missing('status');
+        if (typeof payload.title !== 'string') return missing('title');
+        return null;
+      case 'close':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        return null;
+      case 'extract':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNormalizedPageShape(payload.page)) return 'invalid "page" (normalized page shape)';
+        if (payload.rawHtml !== undefined && !isRawHtmlCapture(payload.rawHtml)) {
+          return 'invalid "rawHtml" capture';
+        }
+        return null;
+      case 'abort':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        return null;
+      case 'detectLogin':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (!isNonEmptyString(payload.finalUrl)) return missing('finalUrl');
+        if (payload.status !== null && typeof payload.status !== 'number') return missing('status');
+        if (!isRecord(payload.signals)) return missing('signals');
+        return null;
+      case 'captureState':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.scopeHost)) return missing('scopeHost');
+        if (!isAuthStorageState(payload.storageState)) return 'invalid "storageState"';
+        if (typeof payload.cookieCount !== 'number') return missing('cookieCount');
+        if (typeof payload.originCount !== 'number') return missing('originCount');
+        return null;
+      case 'captureViewport':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (!isNonEmptyString(payload.finalUrl)) return missing('finalUrl');
+        if (payload.status !== null && typeof payload.status !== 'number') return missing('status');
+        if (!isViewportProfile(payload.profile)) return badProfile();
+        if (payload.screenshotBase64 !== null && typeof payload.screenshotBase64 !== 'string') {
+          return missing('screenshotBase64');
+        }
+        if (!Array.isArray(payload.detectedBreakpoints)) return missing('detectedBreakpoints');
+        if (!Array.isArray(payload.elements)) return missing('elements');
+        if (typeof payload.truncated !== 'boolean') return missing('truncated');
+        return null;
+      case 'captureAssets':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (!isNonEmptyString(payload.finalUrl)) return missing('finalUrl');
+        if (payload.status !== null && typeof payload.status !== 'number') return missing('status');
+        if (!Array.isArray(payload.assets)) return missing('assets');
+        if (typeof payload.skipped !== 'number') return missing('skipped');
+        if (typeof payload.truncated !== 'boolean') return missing('truncated');
+        return null;
+      case 'captureBlueprint':
+        if (!isNonEmptyString(payload.sessionId)) return missing('sessionId');
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (!isNonEmptyString(payload.finalUrl)) return missing('finalUrl');
+        if (payload.status !== null && typeof payload.status !== 'number') return missing('status');
+        if (!isBlueprintEvidenceShape(payload.evidence)) return 'invalid "evidence" document';
+        return null;
+      case 'serveClone':
+        if (!isNonEmptyString(payload.url)) return missing('url');
+        if (typeof payload.port !== 'number') return missing('port');
+        if (!isNonEmptyString(payload.root)) return missing('root');
+        return null;
+      case 'stopClone':
+        if (typeof payload.stopped !== 'boolean') return missing('stopped');
+        return null;
+      default:
+        return null;
+    }
+  }
+
+  if (type === 'event') {
+    return isNonEmptyString(payload.event) ? null : missing('event');
+  }
+  if (type === 'log') {
+    if (typeof payload.level !== 'string') return missing('level');
+    if (typeof payload.message !== 'string') return missing('message');
+    return null;
+  }
+  if (type === 'error') {
+    if (!isNonEmptyString(payload.code)) return missing('code');
+    if (typeof payload.message !== 'string') return missing('message');
+    return null;
+  }
+  return null;
+}
+
+/**
  * Validate a decoded value as a protocol message. Returns a reason string on
  * failure so callers can surface an actionable `WORKER_PROTOCOL_VIOLATION`.
  */
@@ -1288,12 +1532,24 @@ export function validateMessage(value: unknown): { ok: true } | { ok: false; rea
   // payload only needs the command discriminator (a placeholder is expected).
   if (value.type === 'result' && value.error !== undefined) {
     if (!isRecord(value.payload) || !isCommandName(value.payload.command)) {
-      return { ok: false, reason: 'Invalid payload for "result" message.' };
+      return {
+        ok: false,
+        reason: 'Invalid payload for "result" message: missing command discriminator.'
+      };
     }
     return { ok: true };
   }
-  if (!validatePayload(value.type as WorkerMessageType, value.payload)) {
-    return { ok: false, reason: `Invalid payload for "${value.type}" message.` };
+  const messageType = value.type as WorkerMessageType;
+  if (!validatePayload(messageType, value.payload)) {
+    // Name the offending field so a caller sees an actionable protocol error
+    // (e.g. `missing or invalid "sessionId"`) instead of a generic "malformed".
+    const problem = describePayloadProblem(messageType, value.payload);
+    return {
+      ok: false,
+      reason: problem
+        ? `Invalid "${messageType}" payload: ${problem}.`
+        : `Invalid payload for "${value.type}" message.`
+    };
   }
   return { ok: true };
 }

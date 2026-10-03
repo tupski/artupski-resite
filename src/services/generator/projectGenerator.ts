@@ -59,6 +59,7 @@ import {
   resolveWithinRoot,
   safeAssetPath,
   safeComponentFileName,
+  safeDocFileName,
   safeHookFileName,
   toPascalCase
 } from './projectPaths';
@@ -249,6 +250,18 @@ export async function generateProject(
     });
   }
 
+  // --- 5b. Generated documentation (bounded; written at the project root). ----
+  const docFiles: GeneratedFile[] = [];
+  const usedDocNames = new Set<string>();
+  for (const doc of input.docs ?? []) {
+    const name = safeDocFileName(doc.name);
+    if (usedDocNames.has(name)) {
+      continue;
+    }
+    usedDocNames.add(name);
+    docFiles.push({ path: name, contents: doc.contents });
+  }
+
   // --- 6. Routes & pages from the Blueprint (never fabricated). ---------------
   const { routes, droppedRoutes, pageFiles } = buildRoutes(blueprint, componentImports);
 
@@ -279,7 +292,8 @@ export async function generateProject(
     ...componentFiles,
     ...hookFiles,
     ...pageFiles,
-    ...assetFiles
+    ...assetFiles,
+    ...docFiles
   ];
 
   // --- 9. Resource-limit validation BEFORE any write. -------------------------

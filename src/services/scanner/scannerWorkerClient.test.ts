@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ScannerWorkerClient, type ScannerWorkerAdapter } from './scannerWorkerClient';
+import {
+  ProcessManagerScannerWorker,
+  ScannerWorkerClient,
+  type ScannerWorkerAdapter
+} from './scannerWorkerClient';
 import type { WorkerCommandPayload, WorkerResultPayload, NormalizedPage } from '../infra/workerProtocol';
+import type { ProcessManager } from '../infra/processManager';
 import { createProcessError } from '../infra/processErrors';
 
 function samplePage(): NormalizedPage {
@@ -129,5 +134,26 @@ describe('ScannerWorkerClient', () => {
     const client = new ScannerWorkerClient(worker);
     await client.shutdown();
     expect(worker.stopCount).toBe(1);
+  });
+
+  it('recovers a failed worker before sending the next command (lifecycle fix)', async () => {
+    const calls: string[] = [];
+    const manager = {
+      ensureReady: async () => {
+        calls.push('ensureReady');
+      },
+      request: async (command: WorkerCommandPayload) => {
+        calls.push(`request:${command.command}`);
+        return { command: 'ping', pong: true, workerVersion: '0.2.0' } as WorkerResultPayload;
+      }
+    } as unknown as ProcessManager;
+    const adapter = new ProcessManagerScannerWorker(manager);
+
+    const result = await adapter.request({ command: 'ping' });
+
+    expect(result.command).toBe('ping');
+    // The adapter must recover (ensureReady) BEFORE sending the command, so a
+    // worker left in `failed` is restarted instead of rejecting the command.
+    expect(calls).toEqual(['ensureReady', 'request:ping']);
   });
 });

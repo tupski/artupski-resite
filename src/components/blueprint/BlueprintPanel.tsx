@@ -7,6 +7,8 @@ import { IconScan } from '../ui/icons';
 import type { BlueprintRoot, BlueprintValidationError } from '../../types/blueprint';
 import type { Blueprint as BlueprintRecord } from '../../types/models';
 import type { BlueprintStatus, BlueprintStoreError } from '../../stores/blueprintStore';
+import type { BlueprintDocsDocResult } from '../../services/ipc';
+import { planBlueprintDocs } from '../../services/blueprint/docs/catalog';
 
 /**
  * Blueprint viewer - Artupski ReSite
@@ -50,6 +52,16 @@ export interface BlueprintPanelProps {
   onGenerate: () => void;
   /** Export the loaded document as pretty JSON. */
   onExport: () => void;
+  /** Generated documentation from the last docs run (empty until one runs). */
+  docs?: BlueprintDocsDocResult[];
+  /** Optional documents intentionally skipped in the last docs run. */
+  docsSkipped?: Array<{ name: string; title: string; required: boolean }>;
+  /** Bounded warnings from the last docs run. */
+  docsWarnings?: Array<{ doc: string; code: string; message: string }>;
+  /** True while a documentation run is in flight. */
+  generatingDocs?: boolean;
+  /** Generate the documentation set for the loaded Blueprint. */
+  onGenerateDocs?: () => void;
 }
 
 /** Human, locale-aware timestamp; an unparseable value is shown verbatim. */
@@ -89,9 +101,32 @@ export function BlueprintPanel({
   error,
   canGenerate,
   onGenerate,
-  onExport
+  onExport,
+  docs = [],
+  docsSkipped = [],
+  docsWarnings = [],
+  generatingDocs = false,
+  onGenerateDocs
 }: BlueprintPanelProps) {
   const [copied, setCopied] = useState(false);
+
+  // The planned documentation set is derived deterministically from the loaded
+  // document (required docs + relevant/opted-in optionals). Nothing is invented:
+  // when no document is loaded, no plan is shown.
+  const docPlan = useMemo(() => {
+    if (!document) {
+      return [];
+    }
+    try {
+      return planBlueprintDocs(document);
+    } catch {
+      return [];
+    }
+  }, [document]);
+  const generatedByName = useMemo(
+    () => new Map(docs.map((doc) => [doc.name, doc])),
+    [docs]
+  );
 
   const json = useMemo(() => {
     if (!document) {
@@ -145,6 +180,16 @@ export function BlueprintPanel({
           >
             Export Blueprint JSON
           </Button>
+          {onGenerateDocs ? (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!canExport || generatingDocs}
+              onClick={() => void onGenerateDocs()}
+            >
+              {generatingDocs ? 'Generating docs…' : 'Generate docs'}
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -249,6 +294,87 @@ export function BlueprintPanel({
             <p className="text-caption text-text-muted">
               No validation errors — the document passes the Blueprint schema.
             </p>
+          ) : null}
+
+          {docPlan.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-caption font-medium text-text-secondary">
+                  Documentation ({docPlan.length} doc{docPlan.length === 1 ? '' : 's'})
+                </span>
+                <span className="text-caption text-text-muted">
+                  {docs.length > 0
+                    ? `${docs.length} generated`
+                    : 'Not generated yet — required docs are always produced'}
+                </span>
+              </div>
+
+              {generatingDocs ? (
+                <div className="flex items-center gap-2 py-1 text-caption text-text-muted">
+                  <StatusIndicator tone="active" label="Generating documentation" pulse />
+                  <span>Generating documentation set…</span>
+                </div>
+              ) : null}
+
+              <ul
+                aria-label="Planned documentation"
+                className="flex flex-col gap-1 rounded border border-border-subtle bg-base p-2"
+              >
+                {docPlan.map((entry) => {
+                  const generated = generatedByName.get(entry.name);
+                  return (
+                    <li
+                      key={entry.name}
+                      className="flex flex-wrap items-center justify-between gap-2"
+                    >
+                      <span className="font-mono text-code text-text-primary">{entry.name}</span>
+                      <span className="flex items-center gap-2">
+                        {entry.required ? (
+                          <Badge tone="neutral">Required</Badge>
+                        ) : (
+                          <Badge tone="brand">
+                            {entry.reason === 'opted_in' ? 'Opted in' : 'Relevant'}
+                          </Badge>
+                        )}
+                        {generated ? (
+                          <>
+                            <Badge tone={generated.source === 'ai' ? 'success' : 'neutral'}>
+                              {generated.source === 'ai' ? 'AI' : 'Deterministic'}
+                            </Badge>
+                            <span className="text-caption text-text-muted">
+                              {generated.bytes.toLocaleString()} bytes
+                            </span>
+                          </>
+                        ) : (
+                          <Badge tone="warning">Pending</Badge>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {docsSkipped.length > 0 ? (
+                <span className="text-caption text-text-muted">
+                  Optional docs not generated (no relevance signal):{' '}
+                  {docsSkipped.map((entry) => entry.name).join(', ')}
+                </span>
+              ) : null}
+
+              {docsWarnings.length > 0 ? (
+                <ul
+                  aria-label="Documentation warnings"
+                  className="flex flex-col gap-1 rounded border border-warning/40 bg-warning/10 p-2"
+                >
+                  {docsWarnings.map((warning, index) => (
+                    <li key={`${warning.doc}-${warning.code}-${index}`} className="text-caption text-text-secondary">
+                      <span className="font-mono text-code text-text-primary">{warning.doc}</span>{' '}
+                      {warning.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="flex flex-col gap-1">

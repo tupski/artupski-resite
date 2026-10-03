@@ -574,3 +574,112 @@ describe('workerProtocol clone extensions (Phase 8)', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+describe('workerProtocol diagnostics and frame budget (lifecycle fix)', () => {
+  it('names the missing "sessionId" on a captureViewport command', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'cv',
+        type: 'command',
+        payload: {
+          command: 'captureViewport',
+          url: 'http://x/',
+          timeoutMs: 1000,
+          profile: {
+            name: 'mobile',
+            width: 375,
+            height: 812,
+            deviceScaleFactor: 3,
+            isMobile: true,
+            hasTouch: true
+          }
+        }
+      })
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('WORKER_PROTOCOL_VIOLATION');
+      expect(result.error.message).toMatch(/sessionId/);
+    }
+  });
+
+  it('names the missing "url" on a navigate command', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'n',
+        type: 'command',
+        payload: { command: 'navigate', sessionId: 's', timeoutMs: 1000 }
+      })
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/url/);
+    }
+  });
+
+  it('names an out-of-range viewport profile', () => {
+    const result = parseMessage(
+      JSON.stringify({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 'cv',
+        type: 'command',
+        payload: {
+          command: 'captureViewport',
+          sessionId: 's',
+          url: 'http://x/',
+          timeoutMs: 1000,
+          profile: {
+            name: 'mobile',
+            width: 999_999,
+            height: 812,
+            deviceScaleFactor: 3,
+            isMobile: true,
+            hasTouch: true
+          }
+        }
+      })
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/profile/);
+    }
+  });
+
+  it('accepts a screenshot-sized result frame well above the old 1 MiB cap', () => {
+    const screenshot = 'A'.repeat(3 * 1024 * 1024);
+    const message = createResultMessage('cv', {
+      command: 'captureViewport',
+      sessionId: 's',
+      url: 'http://x/',
+      finalUrl: 'http://x/',
+      status: 200,
+      profile: {
+        name: 'mobile',
+        width: 375,
+        height: 812,
+        deviceScaleFactor: 3,
+        isMobile: true,
+        hasTouch: true
+      },
+      screenshotBase64: screenshot,
+      detectedBreakpoints: [],
+      elements: [],
+      truncated: false
+    });
+    expect(() => serializeMessage(message)).not.toThrow();
+    const parsed = parseMessage(serializeMessage(message).trim());
+    expect(parsed.ok).toBe(true);
+  });
+
+  it('still refuses a frame beyond MAX_FRAME_BYTES', () => {
+    const huge = {
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      id: 'a',
+      type: 'event',
+      payload: { event: 'big', data: { blob: 'z'.repeat(MAX_FRAME_BYTES + 1) } }
+    } as unknown as WorkerMessage;
+    expect(() => serializeMessage(huge)).toThrowError(/exceeds/i);
+  });
+});

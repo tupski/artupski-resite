@@ -26,6 +26,29 @@ export {
 } from './runBlueprint';
 export { defaultEvidenceIo } from './blueprintFactory';
 
+// AI-powered documentation set (required + conditional optional docs)
+export {
+  generateBlueprintDocs,
+  runBlueprintDocs,
+  planBlueprintDocs,
+  skippedOptionalDocs,
+  isOptionalDocRelevant,
+  buildBlueprintDoc,
+  buildDocSystemPrompt,
+  projectDocPayload,
+  DOC_TITLES,
+  NarrativeSchema,
+  DOC_TASK_PREFIX,
+  sanitizeNarrative,
+  type BlueprintDocsEngine,
+  type BlueprintDocsDeps,
+  type BlueprintDocsEventSink,
+  type RunBlueprintDocsRequest,
+  type RunBlueprintDocsResult,
+  type RunBlueprintDocsDeps,
+  type BlueprintDocsReadStore
+} from './docs';
+
 // Lifecycle + persistence (Phase 9)
 export {
   runBlueprintLifecycle,

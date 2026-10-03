@@ -53,6 +53,18 @@ export interface GeneratedHook {
 }
 
 /**
+ * A generated documentation file to write at the project root (e.g. `AGENTS.md`).
+ * Produced by the Blueprint documentation engine; treated as opaque text and
+ * written verbatim (never executed). `name` must be a single safe path segment.
+ */
+export interface ProjectDocInput {
+  /** File name (e.g. `AGENTS.md`); sanitized to a single safe segment. */
+  name: string;
+  /** Markdown contents. */
+  contents: string;
+}
+
+/**
  * A static asset to write into the generated project (`public/assets/<path>`).
  * `bytes` is optional: when absent, the asset is recorded as skipped (honest),
  * never fetched from the network and never fabricated.
@@ -108,6 +120,8 @@ export interface ProjectGenerationRequest {
   hooks?: readonly GeneratedHook[];
   /** Optional static assets with bytes. */
   assets?: readonly ProjectAssetInput[];
+  /** Optional generated documentation files (written at the project root). */
+  docs?: readonly ProjectDocInput[];
   /** The absolute directory the project is written beneath (sandbox boundary). */
   targetRoot: string;
   options?: ProjectGenerationOptions;

@@ -4,7 +4,7 @@
  *
  * All site data is untrusted. These hard caps bound collection sizes and field
  * lengths so a hostile page cannot exhaust worker memory or flood the host with
- * an oversized frame (the protocol already caps a frame at 1 MiB; these limits
+ * an oversized frame (the protocol already caps a frame at 64 MiB; these limits
  * keep a well-formed result comfortably below it).
  */
 

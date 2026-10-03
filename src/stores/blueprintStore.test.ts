@@ -10,11 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const blueprintGetLatest = vi.fn();
 const blueprintExport = vi.fn();
 const blueprintGenerate = vi.fn();
+const blueprintGenerateDocs = vi.fn();
 
 vi.mock('../services/ipc', () => ({
   blueprintGetLatest: (...args: unknown[]) => blueprintGetLatest(...args),
   blueprintExport: (...args: unknown[]) => blueprintExport(...args),
-  blueprintGenerate: (...args: unknown[]) => blueprintGenerate(...args)
+  blueprintGenerate: (...args: unknown[]) => blueprintGenerate(...args),
+  blueprintGenerateDocs: (...args: unknown[]) => blueprintGenerateDocs(...args)
 }));
 
 import { useBlueprintStore } from './blueprintStore';
@@ -41,6 +43,7 @@ describe('blueprintStore', () => {
     blueprintGetLatest.mockReset();
     blueprintExport.mockReset();
     blueprintGenerate.mockReset();
+    blueprintGenerateDocs.mockReset();
     useBlueprintStore.getState().reset();
   });
 
@@ -235,6 +238,60 @@ describe('blueprintStore', () => {
     const json = await useBlueprintStore.getState().exportJson();
     expect(json).toContain('blueprint_version');
     expect(blueprintExport).not.toHaveBeenCalled();
+  });
+
+  it('records generated documentation and its warnings', async () => {
+    useBlueprintStore.setState({ scanId: 's1' });
+    blueprintGenerateDocs.mockResolvedValue({
+      ok: true,
+      data: {
+        docs: [
+          {
+            name: 'AGENTS.md',
+            title: 'AGENTS',
+            bytes: 120,
+            source: 'ai',
+            selectionReason: 'required',
+            warnings: [],
+            contents: '# AGENTS\n'
+          }
+        ],
+        warnings: [{ doc: 'PRD.md', code: 'API_KEY_INVALID', message: 'AI unavailable.' }],
+        skipped: [{ name: 'DATABASE.md', title: 'Database', required: false }]
+      }
+    });
+
+    const ok = await useBlueprintStore.getState().generateDocs();
+    expect(ok).toBe(true);
+    expect(blueprintGenerateDocs).toHaveBeenCalledWith('s1', undefined);
+    const state = useBlueprintStore.getState();
+    expect(state.docs).toHaveLength(1);
+    expect(state.docs[0]?.source).toBe('ai');
+    expect(state.docsWarnings).toHaveLength(1);
+    expect(state.docsSkipped).toHaveLength(1);
+    expect(state.generatingDocs).toBe(false);
+  });
+
+  it('records a documentation failure honestly', async () => {
+    useBlueprintStore.setState({ scanId: 's1' });
+    blueprintGenerateDocs.mockResolvedValue({
+      ok: false,
+      error: {
+        code: 'STORAGE_READ_FAILED',
+        category: 'blueprint',
+        message: 'No Blueprint exists for this scan.',
+        severity: 'error',
+        recoverable: true,
+        retryable: false,
+        suggestedAction: 'Generate the Blueprint first.',
+        timestamp: new Date().toISOString()
+      }
+    });
+
+    const ok = await useBlueprintStore.getState().generateDocs();
+    expect(ok).toBe(false);
+    expect(useBlueprintStore.getState().error?.code).toBe('STORAGE_READ_FAILED');
+    expect(useBlueprintStore.getState().generatingDocs).toBe(false);
   });
 
   it('clears back to idle', async () => {

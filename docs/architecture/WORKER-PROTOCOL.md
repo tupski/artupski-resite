@@ -47,11 +47,14 @@ interface WorkerEnvelope<TType, TPayload> {
 - `WORKER_PROTOCOL_VERSION` is an **integer**, currently `1`.
 - Both sides **reject** any frame whose `protocolVersion` is not an exact match, surfacing `WORKER_PROTOCOL_VIOLATION`.
 - Bump the version only on a **breaking** wire change; additive fields (like `ping.browser`) do not require a bump.
+- **Staged bundle integrity (as built):** `scripts/stageWorkers.mjs` parses `WORKER_PROTOCOL_VERSION` and the command set from the source and **verifies** the freshly bundled `index.js` carries them, failing the build otherwise. This prevents shipping a stale worker whose protocol version/commands no longer match the webview (a root cause of the "malformed or unsupported message / version mismatch" report).
 
 ### 2.2 Deterministic serialization
 
 - `stableStringify()` emits object keys in **sorted order at every depth**, so identical messages always produce identical bytes (diffable, cache-friendly).
-- `MAX_FRAME_BYTES` (1 MiB) caps a single frame. Serializing beyond it throws `WORKER_PROTOCOL_VIOLATION`; decoding drops oversize frames and counts them.
+- `MAX_FRAME_BYTES` (**64 MiB**) caps a single frame. Serializing beyond it throws `WORKER_PROTOCOL_VIOLATION`; decoding drops oversize frames and counts them.
+  - **Correction (as built):** this cap was previously **1 MiB**, which is *smaller* than a single legitimate `captureViewport` result (a full-page PNG is allowed up to `MAX_SCREENSHOT_BASE64_BYTES` = 12 MiB of base64). The worker's only terminal reply therefore failed to serialize, was silently dropped, and the host saw a 30s timeout followed by the failed-state lockout. The cap is now 64 MiB (headroom over the largest legal frame: 12 MiB screenshot + envelope, or the 4 MiB Blueprint document).
+  - The native line cap in `src-tauri/src/process.rs` (`MAX_LINE_BYTES`) is raised to the same 64 MiB so a large frame is never truncated mid-JSON (a truncated frame decodes as a "malformed message").
 
 ### 2.3 Framing & buffering
 
@@ -101,7 +104,9 @@ All additions after Phase 3 are **additive**: the envelope shape is unchanged an
 
 - Every frame crossing the boundary is validated (`validateMessage`) before use: envelope shape, integer version, non-empty `id`, known `type`, and a payload matching the type.
 - A `result` frame that carries an `error` only needs the command discriminator in its payload (a placeholder is expected), because the failure detail lives in `error`.
+- **Specific failure reasons (as built):** when a payload is rejected, the reason names the offending field (e.g. `Invalid "command" payload: missing or invalid "sessionId".`), rather than a generic "malformed message". This lets a caller distinguish a genuinely missing/renamed field from a version mismatch.
 - Malformed frames produce a `StructuredError` with code `WORKER_PROTOCOL_VIOLATION`; the host logs it, emits `process.failed`, fails in-flight requests, and reaps the worker.
+- **Terminal reply guarantee (as built):** every command path in the worker posts exactly one terminal `result` (success **or** error). If a success payload cannot be serialized within `MAX_FRAME_BYTES`, the worker substitutes a bounded error frame instead of dropping the reply, so a command can never silently hang.
 
 ---
 
@@ -113,12 +118,18 @@ The `ProcessManager` state machine:
 not_started → starting → ready ⇄ busy
                    │        │
                    ▼        ▼
-                failed   stopping → stopped → starting (restart)
+                failed   stopping → stopped
+                   │                    │
+                   └──── restarting ◀────┘   (explicit recovery)
+                            │
+                            ▼
+                         starting → ready
 ```
 
 - **Duplicate-start prevention:** concurrent `start()` calls share one promise.
 - **Startup timeout:** spawn + handshake are bounded (≤ 30s).
-- **Communication timeout:** each `request()` is bounded (≤ 30s) and a non-responsive worker is failed and reaped.
+- **Communication timeout:** each `request()` is bounded. The default ceiling is **10 minutes** (not 30s): a worker reply is bounded by the worker's own 30s navigation clamp, but a `captureViewport`/`captureBlueprint` reply also carries a screenshot/DOM payload over stdio. A timeout still fails and reaps the worker, and rejects/cleans up the in-flight request so the worker is never left half-busy.
+- **Recovery from `failed` (as built):** `restart()` performs `failed|stopped → restarting → starting → ready`, releasing any surviving handle first. `ensureReady()` is the transparent entry point used by the production adapters (`ProcessManagerScannerWorker`, `ProcessManagerBrowserWorker`): it returns immediately when the worker is `ready`/`busy`, shares an in-flight startup, and otherwise restarts. This is what prevents the "Cannot send a command to \"crawler\" while it is failed" lockout - a transient crash/timeout no longer permanently wedges the worker. `process.restarting` is emitted on the transition.
 - **Graceful shutdown → forced kill:** `stop()` requests termination, waits a bounded grace period (default 500 ms), then force-kills the tree.
 - **Unexpected exit:** detected via the exit listener; in-flight requests are rejected with `PROCESS_EXITED_UNEXPECTEDLY` and `process.exited` is emitted.
 - **Cleanup:** listeners and timers are always disposed; `resetForTests()` returns the manager to `not_started`.

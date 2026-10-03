@@ -96,6 +96,10 @@ export class ProcessManagerBrowserWorker implements BrowserWorkerAdapter {
   }
 
   async request(command: WorkerCommandPayload, timeoutMs?: number): Promise<WorkerResultPayload> {
+    // Transparently recover a worker that entered `failed` before sending, so a
+    // crash/timeout does not permanently wedge the browser runtime. A healthy
+    // worker is a no-op here.
+    await this.manager.ensureReady();
     return this.manager.request(command, timeoutMs);
   }
 }

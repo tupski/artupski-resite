@@ -17,8 +17,11 @@ import { eventBus } from '../services/infra/eventBus';
 import { logger } from '../services/infra/logger';
 import {
   blueprintGenerate,
+  blueprintGenerateDocs,
   blueprintGetLatest,
   blueprintExport,
+  type BlueprintDocsDocResult,
+  type BlueprintDocsGenerateOptions,
   type BlueprintGenerateArgs
 } from '../services/ipc';
 
@@ -57,10 +60,20 @@ export interface BlueprintState {
   loading: boolean;
   generating: boolean;
   error: BlueprintStoreError | null;
+  /** Generated documentation (empty until a docs run completes). */
+  docs: BlueprintDocsDocResult[];
+  /** Optional documents intentionally skipped in the last docs run. */
+  docsSkipped: Array<{ name: string; title: string; required: boolean }>;
+  /** Bounded warnings from the last docs run. */
+  docsWarnings: Array<{ doc: string; code: string; message: string }>;
+  /** True while a documentation run is in flight. */
+  generatingDocs: boolean;
   /** Load the latest persisted Blueprint for a scan (source of truth). */
   loadForScan: (scanId: string | null) => Promise<void>;
   /** Generate (or regenerate) a Blueprint for a scan, then reload. */
   generate: (args: BlueprintGenerateArgs) => Promise<boolean>;
+  /** Generate the AI-powered documentation set for the loaded Blueprint. */
+  generateDocs: (options?: BlueprintDocsGenerateOptions) => Promise<boolean>;
   /** Export the loaded document as pretty JSON, or null when unreadable. */
   exportJson: () => Promise<string | null>;
   /** Mirror `blueprint.*` events for a scan; returns an unsubscribe. */
@@ -80,7 +93,11 @@ const IDLE_STATE = {
   readError: null as string | null,
   loading: false,
   generating: false,
-  error: null as BlueprintStoreError | null
+  error: null as BlueprintStoreError | null,
+  docs: [] as BlueprintDocsDocResult[],
+  docsSkipped: [] as Array<{ name: string; title: string; required: boolean }>,
+  docsWarnings: [] as Array<{ doc: string; code: string; message: string }>,
+  generatingDocs: false
 };
 
 export const useBlueprintStore = create<BlueprintState>((set, get) => ({
@@ -186,6 +203,33 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     // (never an event-only or in-memory view).
     await get().loadForScan(args.scanId);
     set({ generating: false });
+    return true;
+  },
+
+  generateDocs: async (options) => {
+    const scanId = get().scanId;
+    if (!scanId) {
+      return false;
+    }
+    set({ generatingDocs: true, docsWarnings: [], error: null });
+    const result = await blueprintGenerateDocs(scanId, options);
+    if (!result.ok) {
+      set({
+        generatingDocs: false,
+        error: {
+          code: result.error.code,
+          message: result.error.message,
+          suggestedAction: result.error.suggestedAction
+        }
+      });
+      return false;
+    }
+    set({
+      generatingDocs: false,
+      docs: result.data.docs,
+      docsSkipped: result.data.skipped,
+      docsWarnings: result.data.warnings
+    });
     return true;
   },
 

@@ -28,6 +28,7 @@ import type { StructuredError } from './errors';
 import { logger } from './logger';
 import { createProcessError } from './processErrors';
 import {
+  MAX_FRAME_BYTES,
   createCommandMessage,
   decodeFrames,
   isEventMessage,
@@ -44,6 +45,7 @@ import {
 export type ProcessState =
   | 'not_started'
   | 'starting'
+  | 'restarting'
   | 'ready'
   | 'busy'
   | 'stopping'
@@ -93,26 +95,48 @@ export interface ProcessManagerOptions {
   spawn: SpawnOptions;
   /** Max time for spawn + handshake. Defaults to and is capped at 30s (AGENTS.md section 4). */
   startupTimeoutMs?: number;
-  /** Max time to await a correlated result. Defaults to and is capped at 30s. */
+  /**
+   * Max time to await a correlated result. Defaults to `MAX_COMMUNICATION_TIMEOUT_MS`
+   * (10 minutes). A worker reply is bounded by the *worker's* own navigation clamp
+   * (<=30s per navigation), but a single `captureViewport`/`captureBlueprint`
+   * request also carries a screenshot/DOM payload over stdio, so the host ceiling
+   * is deliberately larger than the 30s navigation clamp; the worker always posts
+   * a terminal reply (success or error) well within it.
+   */
   communicationTimeoutMs?: number;
   /** Grace period before force-kill during shutdown. Default 500ms. */
   shutdownGraceMs?: number;
-  /** Upper bound for the accumulated stdout remainder. Default 1 MiB. */
+  /**
+   * Upper bound for the accumulated stdout remainder. Defaults to `MAX_FRAME_BYTES`
+   * so a legitimate large result frame (e.g. a base64 screenshot) is never sliced
+   * mid-JSON (which would surface as a "malformed message").
+   */
   maxBufferBytes?: number;
 }
 
 export type ProcessStateListener = (state: ProcessState) => void;
 
+/**
+ * Absolute ceiling for a single `request()` await (and startup). 30s is too short
+ * for a `captureViewport` round-trip because the result frame carries a full-page
+ * PNG; a premature host timeout reaps a worker that was about to reply, which the
+ * user then sees as the failed-state lockout. Ten minutes is a safe upper bound:
+ * every worker command is itself bounded by the worker's 30s navigation clamp, so
+ * a reply is never legitimately absent for longer.
+ */
+const MAX_COMMUNICATION_TIMEOUT_MS = 10 * 60 * 1000;
 const HARD_TIMEOUT_CEILING_MS = 30_000;
 
 const VALID_TRANSITIONS: Record<ProcessState, readonly ProcessState[]> = {
   not_started: ['starting'],
   starting: ['ready', 'failed', 'stopping'],
+  // Explicit recovery path: `failed`/`stopped` -> `restarting` -> `starting`.
+  restarting: ['starting', 'failed', 'stopping'],
   ready: ['busy', 'stopping', 'failed'],
   busy: ['ready', 'stopping', 'failed'],
   stopping: ['stopped', 'failed'],
-  stopped: ['starting'],
-  failed: ['starting', 'stopping']
+  stopped: ['starting', 'restarting'],
+  failed: ['starting', 'restarting', 'stopping']
 };
 
 interface PendingRequest {
@@ -122,11 +146,11 @@ interface PendingRequest {
   command: string;
 }
 
-function clampTimeout(value: number | undefined, fallback: number): number {
+function clampTimeout(value: number | undefined, fallback: number, ceiling: number): number {
   if (value === undefined || !Number.isFinite(value) || value <= 0) {
     return fallback;
   }
-  return Math.min(value, HARD_TIMEOUT_CEILING_MS);
+  return Math.min(value, ceiling);
 }
 
 /**
@@ -148,6 +172,7 @@ export class ProcessManager {
   private handle: SpawnedProcess | null = null;
   private startPromise: Promise<void> | null = null;
   private stopPromise: Promise<void> | null = null;
+  private restartPromise: Promise<void> | null = null;
   private stopRequested = false;
 
   private stdoutBuffer = '';
@@ -163,10 +188,18 @@ export class ProcessManager {
     this.name = options.name;
     this.spawner = options.spawner;
     this.spawnOptions = options.spawn;
-    this.startupTimeoutMs = clampTimeout(options.startupTimeoutMs, HARD_TIMEOUT_CEILING_MS);
-    this.communicationTimeoutMs = clampTimeout(options.communicationTimeoutMs, HARD_TIMEOUT_CEILING_MS);
+    this.startupTimeoutMs = clampTimeout(
+      options.startupTimeoutMs,
+      HARD_TIMEOUT_CEILING_MS,
+      HARD_TIMEOUT_CEILING_MS
+    );
+    this.communicationTimeoutMs = clampTimeout(
+      options.communicationTimeoutMs,
+      MAX_COMMUNICATION_TIMEOUT_MS,
+      MAX_COMMUNICATION_TIMEOUT_MS
+    );
     this.shutdownGraceMs = options.shutdownGraceMs ?? 500;
-    this.maxBufferBytes = options.maxBufferBytes ?? 1024 * 1024;
+    this.maxBufferBytes = options.maxBufferBytes ?? MAX_FRAME_BYTES;
     this.log = logger.child(`process:${this.name}`);
   }
 
@@ -222,13 +255,14 @@ export class ProcessManager {
 
   /**
    * Start the worker and complete the protocol handshake. Idempotent: repeated
-   * or concurrent calls share one promise.
+   * or concurrent calls share one promise. Starting from `failed`/`stopped` goes
+   * through `restarting` so a crashed worker can be recovered explicitly.
    */
   start(): Promise<void> {
     if (this.state === 'ready' || this.state === 'busy') {
       return Promise.resolve();
     }
-    if (this.state === 'starting' && this.startPromise) {
+    if ((this.state === 'starting' || this.state === 'restarting') && this.startPromise) {
       return this.startPromise;
     }
     if (this.state === 'stopping') {
@@ -240,6 +274,81 @@ export class ProcessManager {
     }
     this.startPromise = this.runStart();
     return this.startPromise;
+  }
+
+  /**
+   * Recover a failed/stopped worker and return it to `ready`. This is the
+   * documented recovery path for the failed-state lockout: it tears down any
+   * surviving handle, transitions `failed -> restarting -> starting`, then
+   * re-runs the spawn + handshake. Concurrent calls share one promise. Calling it
+   * on a healthy worker is a no-op.
+   */
+  restart(): Promise<void> {
+    if (this.state === 'ready' || this.state === 'busy' || this.state === 'starting') {
+      return this.start();
+    }
+    if (this.restartPromise) {
+      return this.restartPromise;
+    }
+    if (this.state === 'stopping') {
+      return Promise.reject(
+        createProcessError('WORKER_PROTOCOL_VIOLATION', {
+          message: `Cannot restart "${this.name}" while it is stopping.`
+        })
+      );
+    }
+    this.restartPromise = this.runRestart();
+    return this.restartPromise;
+  }
+
+  private async runRestart(): Promise<void> {
+    this.stopRequested = false;
+    this.stopPromise = null;
+    eventBus.emit(createEvent('process.restarting', { processName: this.name }));
+    this.log.info('Restarting worker process');
+    // Enter `restarting` and publish the recovery chain as `startPromise`
+    // SYNCHRONOUSLY (before any await), so a concurrent `start()`/`ensureReady()`
+    // arriving mid-restart shares this promise instead of spawning a second
+    // process. `runStart` later performs `restarting -> starting`.
+    try {
+      this.transition('restarting');
+    } catch {
+      // `restarting` may be illegal from an exotic state; the spawn below still
+      // performs the real transition.
+    }
+    this.startPromise = this.performRestart();
+    try {
+      await this.startPromise;
+    } finally {
+      this.restartPromise = null;
+    }
+  }
+
+  private async performRestart(): Promise<void> {
+    // Release any surviving handle from the previous (failed) generation so a
+    // fresh process is always spawned and no stale listeners linger.
+    await this.cleanupHandle();
+    await this.runStart();
+  }
+
+  /**
+   * Ensure the worker is usable before a command. Returns immediately when it is
+   * `ready`/`busy`; transparently restarts a `failed`/`stopped` worker; and
+   * shares the in-flight startup when one is already running. This is the
+   * single call site a service uses so a transient crash never permanently
+   * locks it out.
+   */
+  async ensureReady(): Promise<void> {
+    if (this.state === 'ready' || this.state === 'busy') {
+      return;
+    }
+    if (this.state === 'stopping') {
+      throw createProcessError('WORKER_PROTOCOL_VIOLATION', {
+        message: `Cannot use "${this.name}" while it is stopping.`
+      });
+    }
+    // `start()` shares the in-flight startup/restart promise (see `start`).
+    return this.start();
   }
 
   private async runStart(): Promise<void> {
@@ -303,7 +412,11 @@ export class ProcessManager {
     }
 
     const message = createCommandMessage(command);
-    const timeoutMs = clampTimeout(timeoutOverrideMs, this.communicationTimeoutMs);
+    const timeoutMs = clampTimeout(
+      timeoutOverrideMs,
+      this.communicationTimeoutMs,
+      MAX_COMMUNICATION_TIMEOUT_MS
+    );
 
     return new Promise<WorkerResultPayload>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -656,6 +769,7 @@ export class ProcessManager {
     await this.cleanupHandle();
     this.startPromise = null;
     this.stopPromise = null;
+    this.restartPromise = null;
     this.stopRequested = false;
     this.stdoutBuffer = '';
     this.stderrBuffer = '';
