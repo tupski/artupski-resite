@@ -52,6 +52,11 @@ export interface BlueprintPanelProps {
   onGenerate: () => void;
   /** Export the loaded document as pretty JSON. */
   onExport: () => void;
+  /**
+   * Hide the generate/regenerate and docs actions. Used by the read-only Project
+   * detail view, where a completed project must be reviewed, not mutated.
+   */
+  readOnly?: boolean;
   /** Generated documentation from the last docs run (empty until one runs). */
   docs?: BlueprintDocsDocResult[];
   /** Optional documents intentionally skipped in the last docs run. */
@@ -102,6 +107,7 @@ export function BlueprintPanel({
   canGenerate,
   onGenerate,
   onExport,
+  readOnly = false,
   docs = [],
   docsSkipped = [],
   docsWarnings = [],
@@ -164,14 +170,16 @@ export function BlueprintPanel({
           deterministically from captured evidence; nothing is inferred beyond that evidence.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="primary"
-            disabled={!canGenerate || generating}
-            onClick={() => void onGenerate()}
-          >
-            {generating ? 'Generating…' : record ? 'Regenerate blueprint' : 'Generate blueprint'}
-          </Button>
+          {readOnly ? null : (
+            <Button
+              type="button"
+              variant="primary"
+              disabled={!canGenerate || generating}
+              onClick={() => void onGenerate()}
+            >
+              {generating ? 'Generating…' : record ? 'Regenerate blueprint' : 'Generate blueprint'}
+            </Button>
+          )}
           <Button
             type="button"
             variant="secondary"
@@ -180,7 +188,7 @@ export function BlueprintPanel({
           >
             Export Blueprint JSON
           </Button>
-          {onGenerateDocs ? (
+          {!readOnly && onGenerateDocs ? (
             <Button
               type="button"
               variant="secondary"
@@ -193,7 +201,7 @@ export function BlueprintPanel({
         </div>
       </div>
 
-      {!canGenerate ? (
+      {!readOnly && !canGenerate ? (
         <p className="text-caption text-text-muted">
           A Blueprint can be generated once the scan has completed.
         </p>

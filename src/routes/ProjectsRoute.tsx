@@ -1,52 +1,27 @@
 import { useEffect, useState, useSyncExternalStore, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { PageShell } from '../components/layout/PageShell';
 import { Panel } from '../components/ui/Panel';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
-import { Badge, type BadgeTone } from '../components/ui/Badge';
+import { Badge } from '../components/ui/Badge';
 import { StatusIndicator, type StatusTone } from '../components/ui/StatusIndicator';
 import { IconAlert, IconGlobe, IconProjects } from '../components/ui/icons';
 import { validateTargetUrl } from '../lib/url';
 import { useProjectsStore } from '../stores/projectsStore';
 import { getStorageState, storageService } from '../services/storage';
-import type { ProjectStatus } from '../types/models';
+import { PROJECT_STATUS_LABEL, PROJECT_STATUS_TONE, formatTimestamp } from '../components/project/format';
 
 /**
  * Projects list (UI-SPEC section 2.1 "Recent Projects").
  *
  * Reads real rows from the local database through `projectsStore` ->
  * `projectService` -> repositories. Shows honest loading, empty, error, and
- * not-ready states; there are no placeholder projects.
+ * not-ready states; there are no placeholder projects. A stored project cannot
+ * be edited or re-scanned, so each row also offers a View action that opens the
+ * read-only detail view.
  */
-
-const STATUS_TONE: Record<ProjectStatus, BadgeTone> = {
-  idle: 'neutral',
-  scanning: 'brand',
-  blueprint_ready: 'brand',
-  generating: 'warning',
-  completed: 'success',
-  error: 'danger'
-};
-
-const STATUS_LABEL: Record<ProjectStatus, string> = {
-  idle: 'Idle',
-  scanning: 'Scanning',
-  blueprint_ready: 'Blueprint ready',
-  generating: 'Generating',
-  completed: 'Completed',
-  error: 'Error'
-};
-
-function formatTimestamp(value: string): string {
-  // Stored as SQLite CURRENT_TIMESTAMP (UTC, "YYYY-MM-DD HH:MM:SS").
-  const iso = value.includes('T') ? value : `${value.replace(' ', 'T')}Z`;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
 
 export function ProjectsRoute() {
   const projects = useProjectsStore((state) => state.projects);
@@ -68,6 +43,7 @@ export function ProjectsRoute() {
     getStorageState
   );
 
+  const navigate = useNavigate();
   const validation = validateTargetUrl(targetUrl);
   const showUrlError = touched && targetUrl.trim().length > 0 && !validation.valid;
   const canSubmit = validation.valid && name.trim().length > 0 && !mutating;
@@ -240,7 +216,17 @@ export function ProjectsRoute() {
               </span>
             </div>
             <span className="text-caption text-text-muted">{formatTimestamp(project.updatedAt)}</span>
-            <Badge tone={STATUS_TONE[project.status]}>{STATUS_LABEL[project.status]}</Badge>
+            <Badge tone={PROJECT_STATUS_TONE[project.status]}>
+              {PROJECT_STATUS_LABEL[project.status]}
+            </Badge>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-label={`View project ${project.name}`}
+              onClick={() => navigate(`/projects/${project.id}`)}
+            >
+              View
+            </Button>
             <Button
               variant="danger"
               size="sm"
