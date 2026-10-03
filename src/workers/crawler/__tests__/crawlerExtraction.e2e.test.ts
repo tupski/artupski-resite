@@ -46,8 +46,8 @@ interface Harness {
   exit: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
-function startWorker(): Harness {
-  const entry = resolveWorkerEntrypoint();
+async function startWorker(): Promise<Harness> {
+  const entry = await resolveWorkerEntrypoint();
   const child = spawn(entry.command, entry.args, { cwd: entry.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
 
   const pending = new Map<string, (outcome: CommandOutcome) => void>();
@@ -116,7 +116,7 @@ describe.skipIf(!RUN_BROWSER_TESTS)('crawler extraction (real Chromium)', () => 
 
   beforeAll(async () => {
     serverProcess = await startFixtureServerProcess();
-    harness = startWorker();
+    harness = await startWorker();
     await harness.send({ command: 'ping' });
     const launched = await harness.send({ command: 'launch', engine: 'chromium', headless: true });
     if (launched.payload.command !== 'launch') {

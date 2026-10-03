@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 16 - End-to-end integration testing & release packaging
+
+The final MVP phase. It adds **no new product feature**: it proves the whole post-crawl pipeline
+(Blueprint -> components -> project -> export) runs end-to-end, fixes the packaged-app worker
+resolution, packages the desktop app, and documents installation/release. It is a **test + config +
+docs** increment: `WORKER_PROTOCOL_VERSION` stays `1` and there is **no SQLite migration**
+(`001`-`008` checksums remain stable).
+
+- **Composed E2E suite** (`e2e/`, the PLAN-named directory; the Vitest `include` and `tsconfig`
+  `include` now cover `e2e/**`): `phase16Pipeline.e2e.test.ts` drives the real offline pipeline —
+  real in-memory SQLite -> real `runBlueprintLifecycle` (real `runBlueprint` + persistence) -> real
+  `synthesizeComponents` (a deterministic **scripted engine** replaces only the AI provider) -> real
+  `generateProject` -> real `exportProject` ZIP -> `readZip` verification of the three docs and every
+  source file byte-for-byte (plus a determinism check). `phase16FullPipeline.e2e.test.ts` (opt-in
+  `RUN_BROWSER_TESTS=1`, dedicated fixture port `8100`) runs the authoritative real-Chromium path
+  (crawl -> Blueprint -> generate -> real `npm install && build` -> `dist/index.html`) and reports
+  **BLOCKED** (skip) when npm/Chromium is unavailable. `phase16Pipeline.perf.test.ts` records
+  generate/export timing and byte counts and asserts only invariants (no timing thresholds).
+- **Packaged worker resolution fixed (top risk)**: the crawler and clone preview server were
+  resolved as co-located `.ts` files a packaged app cannot ship. `scripts/stageWorkers.mjs` now
+  bundles the workers as self-contained CommonJS `.js` under `src-tauri/resources/workers/` (plus the
+  runtime `playwright-core` package), declared as Tauri `bundle.resources`; the pure resolver
+  (`src/workers/workerRuntime.ts`) prefers `<resourceDir>/workers/<name>/index.js` and falls back to
+  the dev `.ts`. `command` stays on the `node`/`node.exe` allowlist and `args` is always an array.
+  Covered by `src/workers/crawler/__tests__/workerPaths.test.ts`; the packaged bundle answers the
+  `ping` handshake and resolves Chromium.
+- **Bundler config** (`src-tauri/tauri.conf.json`): explicit `bundle.targets`
+  (`["nsis","msi","dmg","app"]`), `category`, `publisher`, `copyright`, `shortDescription`/
+  `longDescription`, `createUpdaterArtifacts: false`, and `bundle.resources`; `beforeBuildCommand`
+  runs `npm run build && npm run stage-workers`.
+- **Docs & release process**: new root `README.md` (prerequisites, install, quick start, scan,
+  build/packaging, troubleshooting, security posture) and `RELEASE.md` (semver, the three version
+  locations, `v<semver>` tag format, artifact matrix, clean-install checklist, code-signing note);
+  CI `.github/workflows/ci.yml` (verify on push/PR) and `release.yml` (tag -> Windows nsis+msi,
+  macOS dmg+app). `docs/dev/TESTING.md` §5.14 documents the Phase 16 tier + the `RUN_DESKTOP_E2E`
+  gate. Released as **`v0.1.0`**.
+- **Known limitations** (honest): the packaged app still requires the host Node runtime and a
+  Playwright-installed Chromium; macOS artifacts are built by CI (not on Windows); artifacts are
+  unsigned; the clean-install verification is manual.
+- **Deviations** (see `docs/impl-plan/phase-16-impl-plan.md` §14, C1-C7): Node-runtime worker model
+  with staged resources; local fixtures instead of "reference demo websites"; performance recorded
+  not asserted; no bundled browser/Node; macOS delegated to CI; `format:check` remains pre-existing
+  RED and is not fixed; a new `e2e/` directory with an extended Vitest `include` glob.
+
 ### Phase 15 - Settings, keychain key storage, error boundary & toasts
 
 Completes the settings surface and the security/error-hardening items Phases 1-14 deferred: a full

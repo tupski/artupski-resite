@@ -1,0 +1,80 @@
+# Continuous integration - Artupski ReSite
+#
+# Runs the definition-of-done gates (AGENTS.md §9) on every push and pull request:
+#   - typecheck, lint, test, webview build (Node)
+#   - cargo check + cargo clippy (Rust / Tauri)
+#
+# The default Vitest suite is hermetic (no browser, no network); the opt-in
+# real-Chromium and real-build E2E suites are NOT run here (they need a browser
+# binary and the registry). `format:check` is a pre-existing repo-wide RED and is
+# deliberately not a gate.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  verify-web:
+    name: typecheck / lint / test / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test (default hermetic suite)
+        run: npm run test
+
+      - name: Build webview bundle
+        run: npm run build
+
+  verify-rust:
+    name: cargo check / clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: cargo clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings

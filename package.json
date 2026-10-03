@@ -18,6 +18,8 @@
     "test:unit": "vitest run",
     "test:storage": "vitest run src/services/storage",
     "test:browser": "vitest run src/workers/crawler",
+    "test:e2e": "vitest run e2e",
+    "stage-workers": "node scripts/stageWorkers.mjs",
     "fixture:serve": "node scripts/fixtureServer.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

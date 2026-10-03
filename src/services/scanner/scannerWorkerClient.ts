@@ -282,10 +282,10 @@ export async function createDefaultScannerWorkerClient(): Promise<ScannerWorkerC
   const { TauriProcessSpawner } = await import('../infra/tauriProcessSpawner');
   const workerPathsModule = '../../workers/crawler/workerPaths';
   const { resolveWorkerEntrypoint } = (await import(/* @vite-ignore */ workerPathsModule)) as {
-    resolveWorkerEntrypoint: () => { command: string; args: string[]; cwd: string };
+    resolveWorkerEntrypoint: () => Promise<{ command: string; args: string[]; cwd: string }>;
   };
 
-  const entry = resolveWorkerEntrypoint();
+  const entry = await resolveWorkerEntrypoint();
   const manager = new ProcessManager({
     name: 'crawler',
     spawner: new TauriProcessSpawner(),

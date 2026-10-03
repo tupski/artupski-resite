@@ -136,7 +136,7 @@ describe.skipIf(!RUN_BROWSER_TESTS)('crawler service end-to-end (real Chromium)'
   beforeAll(async () => {
     serverProcess = await startFixtureServerProcess();
 
-    const entry = resolveWorkerEntrypoint();
+    const entry = await resolveWorkerEntrypoint();
     child = spawn(entry.command, entry.args, { cwd: entry.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     const adapter = new StdioWorkerAdapter(child);
     const client = new ScannerWorkerClient(adapter);

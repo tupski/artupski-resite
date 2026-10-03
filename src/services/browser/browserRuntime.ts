@@ -637,15 +637,15 @@ export async function createDefaultBrowserRuntime(): Promise<BrowserRuntime | nu
   const { ProcessManager } = await import('../infra/processManager');
   const { TauriProcessSpawner } = await import('../infra/tauriProcessSpawner');
   // `@vite-ignore`: this module uses Node builtins and must never enter the
-  // browser bundle. The import only runs inside the Tauri shell, where the
-  // worker script is resolved from source. Packaging the worker for a release
-  // build is a documented Phase 3 limitation (see docs/architecture/ARCHITECTURE.md).
+  // browser bundle. The import only runs inside the Tauri shell. Phase 16 makes
+  // the resolver packaged-aware: it prefers the bundler-staged worker under the
+  // Tauri resource directory and falls back to the co-located dev `.ts`.
   const workerPathsModule = '../../workers/crawler/workerPaths';
   const { resolveWorkerEntrypoint } = (await import(/* @vite-ignore */ workerPathsModule)) as {
-    resolveWorkerEntrypoint: () => { command: string; args: string[]; cwd: string };
+    resolveWorkerEntrypoint: () => Promise<{ command: string; args: string[]; cwd: string }>;
   };
 
-  const entry = resolveWorkerEntrypoint();
+  const entry = await resolveWorkerEntrypoint();
   const manager = new ProcessManager({
     name: 'crawler',
     spawner: new TauriProcessSpawner(),

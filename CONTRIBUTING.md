@@ -16,6 +16,10 @@ Artupski ReSite is a high-performance, local-first reverse engineering desktop s
   - macOS: Xcode Command Line Tools.
   - Linux: `libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`.
 
+For end-user installation, usage, and troubleshooting, see the root
+[`README.md`](README.md). For building and publishing a release, see
+[`RELEASE.md`](RELEASE.md).
+
 ### 2.2 Initial Setup Commands
 ```bash
 # Clone repository

@@ -8,6 +8,8 @@ dist-ssr
 # Tauri / Rust
 src-tauri/target
 src-tauri/gen
+# Generated worker bundles staged for packaging (scripts/stageWorkers.mjs).
+src-tauri/resources
 
 # Test output
 coverage

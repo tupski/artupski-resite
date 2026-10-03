@@ -131,9 +131,9 @@ async function resolveDefaultAdapter(): Promise<CloneServerAdapter | null> {
   const { TauriProcessSpawner } = await import('../infra/tauriProcessSpawner');
   const workerPathsModule = '../../workers/cloneServer/workerPaths';
   const { resolveCloneServerEntrypoint } = (await import(/* @vite-ignore */ workerPathsModule)) as {
-    resolveCloneServerEntrypoint: () => { command: string; args: string[]; cwd: string };
+    resolveCloneServerEntrypoint: () => Promise<{ command: string; args: string[]; cwd: string }>;
   };
-  const entry = resolveCloneServerEntrypoint();
+  const entry = await resolveCloneServerEntrypoint();
   const manager = new ProcessManager({
     name: 'clone-server',
     spawner: new TauriProcessSpawner(),

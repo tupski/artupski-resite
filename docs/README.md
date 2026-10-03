@@ -1,8 +1,10 @@
 # Artupski ReSite — Documentation
 
 This folder contains all project documentation, organized by category. For project-level
-guidelines and history, see the root files: [`AGENTS.md`](../AGENTS.md),
-[`CONTRIBUTING.md`](../CONTRIBUTING.md), and [`CHANGELOG.md`](../CHANGELOG.md).
+guidelines and history, see the root files: [`README.md`](../README.md) (install, usage, build,
+troubleshooting), [`RELEASE.md`](../RELEASE.md) (versioning and release process),
+[`AGENTS.md`](../AGENTS.md), [`CONTRIBUTING.md`](../CONTRIBUTING.md), and
+[`CHANGELOG.md`](../CHANGELOG.md).
 
 ## Product
 
@@ -76,3 +78,4 @@ guidelines and history, see the root files: [`AGENTS.md`](../AGENTS.md),
 | [`phase-13-impl-plan.md`](impl-plan/phase-13-impl-plan.md) | Visual verification & diff engine (Phase 13): dependency-free PNG codec + pixel diff core, managed loopback server for the generated project, multi-viewport capture/diff service, `diff.*` events, `asset_read` sandbox command, and the side-by-side/slider/diff viewer. |
 | [`phase-14-impl-plan.md`](impl-plan/phase-14-impl-plan.md) | Project documentation & export engine (Phase 14): the `src/services/exporter/` module (`docGenerator.ts`, dependency-free deterministic `zip.ts`, `zipExporter.ts` orchestration) generating `README.md`/`ARCHITECTURE.md`/`COMPONENTS.md` and bundling a generated project to ZIP or folder, with path confinement, reject-not-truncate limits, `export.*` events, and the opt-in `RUN_EXPORT_E2E=1` unzip/verify E2E. |
 | [`phase-15-impl-plan.md`](impl-plan/phase-15-impl-plan.md) | Settings, telemetry, security & error-handling hardening (Phase 15): the completed Settings screen (crawler defaults + security panels), OS-keychain API-key storage (`src-tauri/src/secret.rs` + `src/services/security/keychain.ts`, fail-closed migration off plaintext `app_settings`), secret redaction at the logging boundary, a global `ErrorBoundary`, the `ToastRegion`/`errorBridge` toast system, the `security.*` events, and the `SECRET_*` error codes (deviations C1-C8). |
+| [`phase-16-impl-plan.md`](impl-plan/phase-16-impl-plan.md) | End-to-end integration testing & release packaging (Phase 16): the composed offline + real-browser `e2e/` pipeline suites, the packaged-worker fix (staged Tauri `bundle.resources` + a packaged-aware resolver, C1), the recorded performance harness, the `README.md`/`RELEASE.md` docs, CI workflows, and the `v0.1.0` release (deviations C1-C7). |

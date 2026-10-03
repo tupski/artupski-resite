@@ -151,9 +151,9 @@ async function resolveDefaultAdapter(): Promise<GeneratedServerAdapter | null> {
   // server this phase needs; it is reused rather than duplicated (impl plan §17).
   const workerPathsModule = '../../workers/cloneServer/workerPaths';
   const { resolveCloneServerEntrypoint } = (await import(/* @vite-ignore */ workerPathsModule)) as {
-    resolveCloneServerEntrypoint: () => { command: string; args: string[]; cwd: string };
+    resolveCloneServerEntrypoint: () => Promise<{ command: string; args: string[]; cwd: string }>;
   };
-  const entry = resolveCloneServerEntrypoint();
+  const entry = await resolveCloneServerEntrypoint();
   const manager = new ProcessManager({
     name: 'diff-server',
     spawner: new TauriProcessSpawner(),

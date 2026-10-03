@@ -133,7 +133,7 @@ describe.skipIf(!RUN_BROWSER_TESTS)('interactive auth capture (real headed Chrom
 
   beforeAll(async () => {
     serverProcess = await startFixtureServerProcess();
-    const entry = resolveWorkerEntrypoint();
+    const entry = await resolveWorkerEntrypoint();
     child = spawn(entry.command, entry.args, { cwd: entry.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     adapter = new StdioWorkerAdapter(child);
     await adapter.request({ command: 'ping' });

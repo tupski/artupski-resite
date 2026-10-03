@@ -29,5 +29,5 @@
 
     "types": ["vitest/globals", "@testing-library/jest-dom", "vite/client"]
   },
-  "include": ["src"]
+  "include": ["src", "e2e"]
 }

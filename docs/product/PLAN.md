@@ -636,6 +636,7 @@ stays `1`; **no SQLite migration** is added (`001`-`008` checksums remain stable
 ---
 
 ## Phase 16: End-to-End Integration Testing & Release Packaging
+- **Status**: COMPLETE (see the Phase 16 implementation note below and `docs/impl-plan/phase-16-impl-plan.md`).
 - **Goal**: Full pipeline integration validation and desktop installer builds.
 - **Scope**: E2E test runs (Scan -> Blueprint -> Project -> Build), production Tauri bundle generation.
 - **Dependencies**: Phase 0 through Phase 15.
@@ -648,3 +649,60 @@ stays `1`; **no SQLite migration** is added (`001`-`008` checksums remain stable
 - **Acceptance Criteria**: Single-click scan to generated project completes with 100% buildable output; native installer packages successfully.
 - **Potential Risks**: Platform-specific installer code signing and packaging hurdles.
 - **Verification**: Install generated desktop package on clean environment; execute full website reverse-engineering workflow.
+
+### Phase 16 Implementation Notes (as built)
+
+The final MVP phase. It adds **no new product feature**: it proves the whole post-crawl pipeline
+runs end-to-end, packages the desktop app, and documents installation/release. `WORKER_PROTOCOL_VERSION`
+stays `1`; **no SQLite migration** is added (`001`-`008` checksums remain stable).
+
+- **Composed E2E suite** (`e2e/`, the PLAN-named directory; the Vitest `include` glob and the
+  `tsconfig` `include` now cover `e2e/**`): `phase16Pipeline.e2e.test.ts` drives the REAL services
+  offline — real in-memory SQLite (`createTestStorage`) → real `runBlueprintLifecycle` (real
+  `runBlueprint` + real persistence) → real `synthesizeComponents` (a **scripted engine** replaces
+  only the AI provider) → real `generateProject` → real `exportProject` ZIP → `readZip` verification
+  of the three docs and every source file byte-for-byte. `phase16FullPipeline.e2e.test.ts`
+  (opt-in `RUN_BROWSER_TESTS=1`, dedicated fixture port `8080` — an allowlisted crawler port, C8) is
+  the authoritative R4/R5 test: real
+  Chromium crawl → real Blueprint evidence capture + synthesis → generate → real `npm install &&
+  build` (gated on `RUN_PROJECT_BUILD=1`) → assert `dist/index.html`; it reports **BLOCKED** (skip)
+  when npm or Chromium is unavailable, never a false PASS.
+- **Performance harness** (`phase16Pipeline.perf.test.ts`, default suite): a deterministic synthetic
+  Blueprint (bounded to the Phase 11 synthesis cap) through the real `generateProject` +
+  `exportProject`. It **records** numbers and asserts only invariants (completes, within the Phase 12/
+  14 caps, deterministic byte count across two runs) — **no wall-clock thresholds** (deviation C3).
+  Measured on this machine: **25 pages / 50 components → synthesize ≈ 22 ms, generate ≈ 794 ms,
+  export ≈ 660 ms; 88 files, 28,703 bytes written, 56,000-byte archive** (deterministic).
+- **Packaged worker resolution — the phase's top risk (C1)**: the crawler and clone preview server
+  were resolved as co-located `.ts` files that a packaged app cannot ship. Phase 16 stages the
+  worker trees as self-contained CommonJS bundles under `src-tauri/resources/workers/` (plus the
+  runtime `playwright-core` package) via `scripts/stageWorkers.mjs`, declared as Tauri
+  `bundle.resources`, and makes the resolver packaged-aware. The pure resolver
+  (`src/workers/workerRuntime.ts`) prefers `<resourceDir>/workers/<name>/index.js` when present and
+  falls back to the dev `.ts`; `command` stays on the `node`/`node.exe` allowlist and `args` is
+  always an array (no shell). The packaged bundle was smoke-verified to answer the `ping` handshake
+  and resolve Chromium. Resolution order + the injected `resourceDir`/`exists` seam are covered by
+  `src/workers/crawler/__tests__/workerPaths.test.ts` (§9.4).
+- **Bundler config** (`src-tauri/tauri.conf.json`): explicit `bundle.targets`
+  (`["nsis","msi","dmg","app"]`), `category`, `publisher`, `copyright`, `shortDescription`/
+  `longDescription`, `createUpdaterArtifacts: false`, and `bundle.resources` for the staged workers.
+  `beforeBuildCommand` runs `npm run build && npm run stage-workers`.
+- **Docs & release process**: a new root `README.md` (prerequisites, install, quick start, scan,
+  build/packaging, troubleshooting, security posture, docs links), `RELEASE.md` (semver, the three
+  version locations, `v<semver>` tag format, artifact matrix, clean-install checklist, code-signing
+  note), and CI (`ci.yml` verify on push/PR; `release.yml` builds Windows nsis+msi and macOS dmg+app
+  on a tag). `docs/dev/TESTING.md` §5.14 documents the Phase 16 tier and the `RUN_DESKTOP_E2E` gate.
+- **Known limitations (honest)**: the packaged app still requires the **host Node runtime** and a
+  **Playwright-installed Chromium** (C4); **macOS** artifacts are configured and built by CI, not on
+  this Windows host (C5); artifacts are **unsigned** (PLAN §649 risk, `RELEASE.md` §6); the
+  clean-install verification is manual (no clean VM here); and `format:check` remains pre-existing
+  RED (C6).
+- **Recorded deviations** (see `docs/impl-plan/phase-16-impl-plan.md` §14, C1-C8): the Node-runtime
+  worker model + staged resources; local fixtures instead of "reference demo websites"; performance
+  recorded not asserted; no bundled browser/Node; macOS build delegated to CI; `format:check`
+  untouched; a new `e2e/` directory with an extended Vitest `include` glob; the full-pipeline fixture
+  port is `8080` (an allowlisted crawler port) rather than the plan's `8100`.
+- **Verification (executed in this phase)**: `typecheck`, `lint`, `test` (**1001 passed / 27
+  skipped**), `build`, `cargo check`, `cargo clippy --all-targets`, the opt-in E2E suites, and
+  `npm run tauri:build` (Windows nsis + msi) — see the release note for the exact artifact paths.
+  `format:check` remains pre-existing RED (repo-wide, not a gate).

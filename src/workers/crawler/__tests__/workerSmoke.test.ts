@@ -45,8 +45,8 @@ interface Harness {
   exit: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
-function startWorker(): Harness {
-  const entry = resolveWorkerEntrypoint();
+async function startWorker(): Promise<Harness> {
+  const entry = await resolveWorkerEntrypoint();
   const child = spawn(entry.command, entry.args, { cwd: entry.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
 
   const stdout: string[] = [];
@@ -123,7 +123,7 @@ describe.skipIf(!RUN_BROWSER_TESTS)('crawler worker browser smoke', () => {
 
   beforeAll(async () => {
     serverProcess = await startFixtureServerProcess();
-    harness = startWorker();
+    harness = await startWorker();
   });
 
   afterAll(async () => {

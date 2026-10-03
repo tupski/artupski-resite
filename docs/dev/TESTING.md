@@ -378,7 +378,49 @@ npx vitest run src/components/settings
 npx vitest run src/stores/uiStore.test.ts src/stores/settingsStore.test.ts
 ```
 
-Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):
+### 5.14 Phase 16 end-to-end integration & release test tier
+
+The final MVP phase adds a composed end-to-end suite in the PLAN-named `e2e/` directory (the Vitest
+`include` glob and the `tsconfig` `include` now cover `e2e/**/*.{test,spec}.{ts,tsx}` — deviation C7).
+It composes the REAL Phase 9-14 services; only the AI provider is replaced (by a deterministic
+scripted engine). No public website is ever contacted (deviation C2: "reference demo websites" =
+local fixtures).
+
+- **Offline composed pipeline** — `e2e/phase16Pipeline.e2e.test.ts` (pure half always runs): real
+  in-memory SQLite (`createTestStorage`) → real `runBlueprintLifecycle` (real `runBlueprint` +
+  real persistence + sandboxed file-write seam) → real `synthesizeComponents` (scripted engine) →
+  real `generateProject` → real `exportProject` ZIP → `readZip` verification of `README.md`/
+  `ARCHITECTURE.md`/`COMPONENTS.md` and **every** source file byte-for-byte, plus a determinism
+  assertion across two runs. The REAL `npm install && npm run build` half is gated on
+  `RUN_PROJECT_BUILD=1` and reports BLOCKED (skip) when npm is unavailable.
+- **Real-browser full pipeline** — `e2e/phase16FullPipeline.e2e.test.ts` (opt-in
+  `RUN_BROWSER_TESTS=1`, dedicated fixture port **8080** — an allowlisted crawler port, see
+  impl-plan C8): fixture server → real Chromium crawl
+  (real worker over stdio + real `CrawlerService`) → real Blueprint evidence capture + synthesis →
+  real `generateProject` → real build (gated on `RUN_PROJECT_BUILD=1`) → assert `dist/index.html`.
+  It reports **BLOCKED** (skip) when npm or Chromium is unavailable, never a false PASS.
+- **Performance harness** — `e2e/phase16Pipeline.perf.test.ts` (default suite): a bounded synthetic
+  Blueprint through the real `generateProject` + `exportProject`. It **records** elapsed ms + byte
+  counts and asserts only invariants (completes, within the Phase 12/14 caps, deterministic byte
+  count across two runs). **No timing thresholds** (deviation C3).
+- **Worker packaging unit test** — `src/workers/crawler/__tests__/workerPaths.test.ts` (§9.4): the
+  pure resolver returns the dev entrypoint when only it exists, the packaged
+  `<resourceDir>/workers/<name>/index.js` when provided and present, never a shell string, keeps
+  `args` an array, and keeps `command` on the `node`/`node.exe` allowlist.
+- **Desktop shell smoke** — `RUN_DESKTOP_E2E=1` (documented, manual/CI-desktop only): install the
+  packaged artifact on a clean machine and run one fixture scan end-to-end. It is **not** automated
+  here (no clean VM) and is recorded honestly in `RELEASE.md` §5.
+
+Run the tier with:
+
+```text
+npx vitest run e2e                                   # offline half + perf (hermetic)
+RUN_PROJECT_BUILD=1 npx vitest run e2e               # + the real generated-project build
+RUN_BROWSER_TESTS=1 RUN_PROJECT_BUILD=1 npx vitest run e2e   # + the real-browser full pipeline
+```
+
+Phase 1 test layout (co-located with source; the Vitest include glob covers both
+`src/**/*.{test,spec}.{ts,tsx}` and `e2e/**/*.{test,spec}.{ts,tsx}`):
 
 - `src/lib/url.test.ts` - URL normalization and validation.
 - `src/stores/*.test.ts` - store lifecycle and persistence behavior.
