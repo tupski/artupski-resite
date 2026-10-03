@@ -49,10 +49,13 @@ export {
   saveAIKey,
   createProviderFromConfig,
   DEFAULT_AI_CONFIG,
+  DEFAULT_PROVIDER_ACCOUNT,
   AI_CONFIG_KEY,
   AI_CREDENTIALS_KEY,
   type AIConfigResult,
   type AIKeyResult,
+  type AIKeyWriteResult,
   type AICredentials,
-  type AISettingsAccess
+  type AISettingsAccess,
+  type AIKeychainAccess
 } from './config';

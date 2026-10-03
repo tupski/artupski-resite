@@ -12,6 +12,7 @@ import { eventBus, type AppEvent } from '../services/infra/eventBus';
 import { runScan, cancelScan } from '../services/scanner/scanService';
 import type { ViewportProfileName } from '../services/infra/workerProtocol';
 import { useAuthStore } from './authStore';
+import type { CrawlerSettings } from './settingsStore';
 import type { ScanLogEntry, ScanLogLevel, ScanProgress, ScanStatus } from '../types/scan';
 
 /** Sliding window keeps memory bounded for the live console. */
@@ -29,6 +30,12 @@ export interface ScanConfiguration {
     tablet: boolean;
     mobile: boolean;
   };
+  /**
+   * When true, capture bounded Blueprint evidence and synthesize the document
+   * after a completed crawl (Phase 9). Defaulted from persisted crawler
+   * settings; the Scan screen can still toggle it per run.
+   */
+  blueprint: boolean;
 }
 
 const EMPTY_PROGRESS: ScanProgress = {
@@ -56,6 +63,8 @@ export interface ScanState {
   setProjectTitle: (title: string) => void;
   setStatus: (status: ScanStatus) => void;
   updateConfiguration: (patch: Partial<ScanConfiguration>) => void;
+  /** Replace the whole configuration (used to seed persisted defaults). */
+  setConfiguration: (configuration: ScanConfiguration) => void;
   appendLog: (level: ScanLogLevel, message: string) => void;
   startScan: () => Promise<void>;
   cancelScan: () => Promise<void>;
@@ -70,8 +79,29 @@ export const DEFAULT_SCAN_CONFIGURATION: ScanConfiguration = {
     desktop: true,
     tablet: false,
     mobile: false
-  }
+  },
+  blueprint: false
 };
+
+/**
+ * Map persisted crawler defaults onto a full scan configuration. Used by the
+ * Scan screen to seed its initial (still per-scan editable) configuration.
+ * `captureViewports` is a single toggle, so it enables the desktop profile only
+ * - the same honest default the Scan screen has always used; extra breakpoints
+ * remain opt-in per scan.
+ */
+export function scanConfigurationFromCrawler(
+  crawler: CrawlerSettings,
+  base: ScanConfiguration = DEFAULT_SCAN_CONFIGURATION
+): ScanConfiguration {
+  return {
+    maxDepth: crawler.maxDepth,
+    maxPages: crawler.maxPages,
+    headless: crawler.headless,
+    viewports: { ...base.viewports, desktop: crawler.captureViewports },
+    blueprint: crawler.generateBlueprint
+  };
+}
 
 function createId(): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') {
@@ -113,6 +143,8 @@ export const useScanStore = create<ScanState>((set, get) => ({
         }
       }
     })),
+
+  setConfiguration: (configuration) => set({ configuration }),
 
   appendLog: (level, message) =>
     set((state) => ({
@@ -176,7 +208,8 @@ export const useScanStore = create<ScanState>((set, get) => ({
         limits: { maxDepth: configuration.maxDepth, maxPages: configuration.maxPages },
         headless: configuration.headless,
         authenticated,
-        viewportProfiles
+        viewportProfiles,
+        blueprint: configuration.blueprint
       });
 
       if (!result.ok) {

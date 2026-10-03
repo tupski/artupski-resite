@@ -44,6 +44,9 @@ Standardized event key structure: `<domain>.<action_or_state>`.
   `export.entry_written`, `export.completed`, `export.failed`). Phase 14 payloads carry the export
   mode, document names, POSIX-relative entry paths, counts, and byte sizes only — **never** file
   contents, document text, or secrets.
+- `security.*`: OS-keychain key lifecycle (`security.key_stored`, `security.key_revoked`,
+  `security.key_unavailable`). Phase 15 payloads carry a provider id, a boolean, and a bounded error
+  code only — **never** the key value, and no key material is ever placed on an event.
 - `storage.*`: Local database initialization, migration lifecycle, readiness.
 - `process.*`: Child-process lifecycle (spawn/ready/busy/stopping/stopped/exited/failed).
 - `browser.*`: Browser runtime detection and controlled session lifecycle.
@@ -62,6 +65,7 @@ export type EventDomain =
   | 'blueprint'
   | 'clone'
   | 'project'
+  | 'security'
   | 'storage';
 
 export interface BaseEventPayload {
@@ -281,6 +285,18 @@ Emitted by the export service (`src/services/exporter/zipExporter.ts`) using the
 | `export.failed` | The run ended in an error or was aborted. | `code`, bounded `message` |
 
 Ordering guarantee: `export.started` → (`export.doc_generated` \| `export.entry_written`)\* → (`export.completed` \| `export.failed`). A single unreadable file is recorded in the report's `skipped` list (`partial: true`) and does not abort the run; a limit/path breach fails the whole run rather than truncating, and the export never throws past its boundary.
+
+### 3.7 Security / Keychain Event Keys (Phase 15)
+
+Emitted by the keychain service (`src/services/security/keychain.ts`) using the shared `createEvent` envelope. Payload interfaces (`SecurityKeyStoredPayload`, `SecurityKeyRevokedPayload`, `SecurityKeyUnavailablePayload`) live in `src/services/infra/eventBus.ts`. Payloads carry a provider id, a boolean, and a bounded error code only — **never** the key value; no secret is ever placed on an event.
+
+| Event key | Emitted when | Payload highlights |
+| :--- | :--- | :--- |
+| `security.key_stored` | A key was successfully written/replaced in the OS credential store. | `providerId` |
+| `security.key_revoked` | A key was deleted from the OS credential store. | `providerId`, `removed` |
+| `security.key_unavailable` | The OS credential store was unreachable (fail-closed path). | `providerId`, bounded `code` |
+
+No `app.error` event is added: the toast region is fed by existing structured-error results and the `pushNotice` bridge, keeping the taxonomy minimal.
 
 ---
 

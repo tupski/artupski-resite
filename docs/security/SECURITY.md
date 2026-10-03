@@ -30,9 +30,17 @@ API keys (OpenAI, Anthropic, OpenRouter) MUST NOT be stored in plaintext in conf
 - Service Identifier: `com.artupski.resite.apikeys`
 - Account Key: Provider slug (`openai`, `anthropic`, `openrouter`).
 
+#### 2.1a Implementation Note (as built, Phase 15)
+
+- **Native boundary**: `src-tauri/src/secret.rs` (the `keyring` crate v3) exposes exactly four custom commands — `secret_available`, `secret_get`, `secret_set`, `secret_delete`. The service id is hard-coded and the caller supplies only a bounded account slug (`^[a-z0-9_-]{1,64}$`, enforced in both Rust and TS before any IPC round-trip); values are capped at 2560 bytes. There is no generic secret-store passthrough and no caller-supplied service/path. The TS wrapper is `src/services/security/keychain.ts`.
+- **Fail closed**: when no OS store is available the key is **not** written anywhere; `SECRET_STORAGE_UNAVAILABLE` is surfaced and the key (if a legacy value exists) is used for the session only. Plaintext persistence is never re-introduced.
+- **Migration from plaintext**: the former `app_settings` row `ai.credentials` (Phase 10) is read once, migrated to the keychain, and deleted via the existing repository **only after a confirmed write**; a failed write retains the row and reports the problem. `ai.config` (non-secret) stays in `app_settings`.
+- **Redaction**: `src/services/security/redaction.ts` (`scrubSecrets` / `createRedactingSink`) wraps the logger's default console sink; `security.*` events carry a provider id / boolean / code only.
+- **Honest limitation**: a real keychain round-trip is not CI-assertable without a live secret store (the default suite verifies the unavailable path). The `capabilities/default.json` stays `["core:default"]` and the CSP is unchanged, because `secret_*` are custom app commands, not plugin permissions.
+
 ### 2.2 Key Lifecycle & Memory Safety
-- In-Memory Lifespan: API keys are loaded into RAM only during active LLM requests and cleared from heap context after payload execution.
-- Key Masking: UI state only holds boolean `hasKey` flags and last 4 characters (`sk-...4F9a`). Raw keys never exposed to React render tree or frontend log outputs.
+- In-Memory Lifespan: API keys are loaded into RAM only during active LLM requests. **Honest as-built note (Phase 15):** the key is held in memory while a request is in flight (the provider reads it per call) and Phase 15 adds **no zeroization**; the earlier "cleared from heap context" wording is aspirational, not an implemented guarantee.
+- Key Masking: UI state only holds boolean `hasKey` flags and last 4 characters (`sk-...4F9a`). Raw keys never exposed to React render tree or frontend log outputs. As built, the Settings panel renders only an honest `present | absent | unavailable` state (no key material at all).
 
 ---
 

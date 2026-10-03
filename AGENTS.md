@@ -74,7 +74,7 @@ artupski-resite/
 
 ## 6. Security & Privacy Rules
 
-1. API Keys: Never write API keys to disk files or SQLite. Use Tauri Keyring OS storage.
+1. API Keys: Never write API keys to disk files or SQLite. Store them only in the OS credential store through the native keychain boundary (`src-tauri/src/secret.rs`, wrapped by `src/services/security/keychain.ts`; service `com.artupski.resite.apikeys`, account = provider slug). The boundary is **fail-closed** — when no OS store is available the key is not persisted at all (never a plaintext fallback), and the app surfaces `SECRET_STORAGE_UNAVAILABLE`.
 2. Sessions: Store captured `storageState.json` using AES-256-GCM encryption at rest.
 3. Untrusted Data: Always wrap crawled DOM/CSS content in explicit `<UNTRUSTED_CRAWLED_DATA>` XML boundary delimiters in LLM prompts.
 4. Path Sandboxing: Assert canonical sandbox path on all asset and code generation file write operations.

@@ -10,6 +10,7 @@ export {
   hasActiveSession,
   getSessionMetadata,
   clearSession,
+  purgeAllSessions,
   isLoginRoute,
   beginInteractiveCapture,
   completeInteractiveCapture,

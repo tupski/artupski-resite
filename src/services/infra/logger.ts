@@ -6,6 +6,7 @@
  * other modules must emit through `logger` rather than raw `console.*`.
  */
 import { toStructuredError, type StructuredError } from './errors';
+import { createRedactingSink } from '../security/redaction';
 
 export const LOG_LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR'] as const;
 
@@ -43,6 +44,23 @@ const CONSOLE_METHOD: Record<LogLevel, (...args: unknown[]) => void> = {
   WARN: console.warn.bind(console),
   ERROR: console.error.bind(console),
 };
+
+/**
+ * Default console sink. It is wrapped with `createRedactingSink` so secret
+ * fields (cookie/authorization/token/password/...) are scrubbed from metadata
+ * and error details at the console boundary. Registered sinks added via
+ * `addSink` receive the unmodified entry (their behavior is unchanged); a
+ * consumer that also needs scrubbing wraps its sink with `createRedactingSink`.
+ */
+const consoleSink: LogSink = (entry) => {
+  CONSOLE_METHOD[entry.level](
+    `[${entry.timestamp}] [${entry.level}] [${entry.scope}] ${entry.message}`,
+    entry.metadata ?? '',
+    entry.error ?? ''
+  );
+};
+
+const defaultRedactingSink: LogSink = createRedactingSink(consoleSink);
 
 /**
  * Small, dependency-free structured logger.
@@ -126,12 +144,8 @@ export class Logger {
       ...(error !== undefined ? { error } : {}),
     };
 
-    // Sanctioned console bridge.
-    CONSOLE_METHOD[level](
-      `[${entry.timestamp}] [${level}] [${this.scope}] ${message}`,
-      metadata ?? '',
-      error ?? ''
-    );
+    // Sanctioned console bridge - secrets are scrubbed at this boundary.
+    defaultRedactingSink(entry);
 
     for (const sink of this.sinks) {
       try {

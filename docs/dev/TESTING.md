@@ -340,6 +340,44 @@ RUN_EXPORT_E2E=1 npx vitest run src/services/exporter/__tests__/zipExporter.e2e.
 
 **Responsive capture (Phase 7, as built)**: `src/services/scanner/responsiveScanner.test.ts` covers profile selection, path sanitisation, and orchestration (including the honest skip-on-failure path). `src/services/storage/__tests__/responsiveCaptures.test.ts` covers the migration + repository (one-per-page/profile, cascade, reopen). `src/services/infra/workerProtocol.test.ts` validates the `captureViewport` wire shape (including the profile bounds). The opt-in `src/workers/crawler/__tests__/responsiveCapture.e2e.test.ts` renders the responsive fixture at desktop AND mobile and asserts the captures are distinct (different screenshot bytes; `nav` visible on desktop, hidden on mobile) with detected media-query breakpoints.
 
+### 5.13 Phase 15 settings / security / error-handling test tier
+
+The Phase 15 hardening is verified through the PLAN-mandated suites plus the supporting
+store/UI/service suites — deterministic, no network, no live OS keychain:
+
+- **Key leakage (PLAN-mandated)** — `src/services/security/__tests__/keychain.test.ts`: the
+  `secret_*` IPC mapping (available/unavailable, get/set/delete, invalid-account rejection, fail
+  closed) and an assertion that the key value never appears in any `app_settings` value, log entry,
+  or emitted event; `src/services/security/__tests__/redaction.test.ts`: recursive, non-mutating
+  scrubbing of `apiKey`/`authorization`/`cookie`/`token`/`password`/`key` fields (incl. arrays and
+  nested objects) in log metadata and an export-shaped payload. `src/services/ai/__tests__/config.test.ts`
+  (extended): keychain-first read, one-time legacy migration + plaintext deletion only after a
+  confirmed write, and the fail-closed `SECRET_STORAGE_UNAVAILABLE` path.
+- **Error-boundary trigger (PLAN-mandated)** — `src/components/common/ErrorBoundary.test.tsx`: a
+  thrown child renders the fallback (no raw stack), `role="alert"`, focus movement to the heading,
+  and each recovery action (reset / reload / copy) invoked correctly.
+- **Toast system** — `src/components/common/ToastRegion.test.tsx`: render by tone, auto-dismiss,
+  action invocation, `aria-live` politeness, `Escape` dismiss, and the bounded (max 5) queue;
+  `src/stores/uiStore.test.ts` (extended): queue cap, `durationMs`, and `pushErrorNotice`.
+- **Settings** — `src/stores/settingsStore.test.ts` (extended): `CrawlerSettings` round-trip +
+  clamp/re-seed; `src/components/settings/CrawlerSettingsPanel.test.tsx` and
+  `SecuritySettingsPanel.test.tsx`: render/change/revoke/purge and the honest unavailable states.
+- **Bridge** — `src/components/common/errorBridge.test.ts`: worker/global error → scrubbed notice;
+  no secret in the payload; the handlers never rethrow.
+- **Native** — `cargo check` and `cargo clippy --all-targets` validate `src-tauri/src/secret.rs`
+  (which also carries Rust unit tests for the account-slug validator). A real keychain round-trip is
+  environment-dependent; where no OS store is present the suite asserts the honest unavailable path
+  rather than a false PASS.
+
+Run the focused suites with:
+
+```text
+npx vitest run src/services/security
+npx vitest run src/components/common
+npx vitest run src/components/settings
+npx vitest run src/stores/uiStore.test.ts src/stores/settingsStore.test.ts
+```
+
 Phase 1 test layout (co-located with source, per Vitest include glob `src/**/*.{test,spec}.{ts,tsx}`):
 
 - `src/lib/url.test.ts` - URL normalization and validation.

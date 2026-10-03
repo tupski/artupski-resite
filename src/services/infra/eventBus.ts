@@ -21,6 +21,7 @@ export type EventDomain =
   | 'diff'
   | 'export'
   | 'ai'
+  | 'security'
   | 'storage'
   | 'process'
   | 'browser'
@@ -107,6 +108,9 @@ export type AppEventType =
   | 'browser.session_closed'
   | 'browser.capture_opened'
   | 'browser.capture_closed'
+  | 'security.key_stored'
+  | 'security.key_revoked'
+  | 'security.key_unavailable'
   | 'responsive.captured';
 
 /** Base envelope carried by every event (EVENT-SYSTEM.md section 3). */
@@ -663,6 +667,31 @@ export interface ExportFailedPayload extends BaseEventPayload {
   message: string;
 }
 
+/**
+ * Security / secret-store lifecycle payloads (Phase 15). They carry a provider
+ * id, a boolean, and a bounded code only - NEVER the key value, a request
+ * header, or any other secret material.
+ */
+export interface SecurityKeyStoredPayload extends BaseEventPayload {
+  domain: 'security';
+  /** Provider slug the secret is stored under (never the secret itself). */
+  providerId: string;
+}
+
+export interface SecurityKeyRevokedPayload extends BaseEventPayload {
+  domain: 'security';
+  providerId: string;
+  /** True when an entry was actually removed; false when none existed. */
+  removed: boolean;
+}
+
+export interface SecurityKeyUnavailablePayload extends BaseEventPayload {
+  domain: 'security';
+  providerId: string;
+  /** Bounded error code (e.g. `SECRET_STORAGE_UNAVAILABLE`); never a value. */
+  code: string;
+}
+
 /** Payload map: ties each event key to a concrete, structured payload. */
 export interface AppEventPayloadMap {
   'app.started': AppStartedPayload;
@@ -741,6 +770,9 @@ export interface AppEventPayloadMap {
   'export.entry_written': ExportEntryWrittenPayload;
   'export.completed': ExportCompletedPayload;
   'export.failed': ExportFailedPayload;
+  'security.key_stored': SecurityKeyStoredPayload;
+  'security.key_revoked': SecurityKeyRevokedPayload;
+  'security.key_unavailable': SecurityKeyUnavailablePayload;
   // Future feature domains are reserved in the taxonomy but carry no payload
   // contract until their engines exist (see docs/product/PLAN.md Phase 2+).
   [key: string]: BaseEventPayload;

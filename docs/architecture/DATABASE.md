@@ -110,6 +110,15 @@ The Blueprint phase adds one **forward-only** migration; `001`-`007` are never e
 - **Repository**: `BlueprintRepository` (`src/services/storage/repositories/blueprintRepository.ts`) owns all SQL for `blueprints` - `upsert` (by `(scan_id, version)`), `getById`, `listByProject`, `listByScan`, `getLatestByScan`, `countByScan`, `deleteById`, `deleteByScan`, `deleteByProject`.
 - **Cascade**: deleting a project removes its blueprints; deleting a scan nulls `scan_id` (the document row survives, still reachable by project). An invalid document is persisted with `is_valid = 0` + bounded `validation_errors`, never discarded.
 
+### 2.8 AI Key Storage & Telemetry Note (as built, Phase 15)
+
+Phase 15 adds **no migration**; `001`-`008` checksums remain stable.
+
+- **AI key moved out of `app_settings`**: the provider API key was previously stored plaintext as the `app_settings` row `ai.credentials` (Phase 10). It now lives in the **OS credential store** (Windows Credential Manager / macOS Keychain / Linux Secret Service) via the native `secret_*` boundary (`SECURITY.md` §2.1). `ai.config` (non-secret: provider, base URL, model, timeout) stays a normal `app_settings` row.
+- **Legacy row is deleted after migration**: `loadAIKey` reads keychain-first; if a legacy `ai.credentials` row exists it is used once and migrated, and the plaintext row is deleted via the existing `SettingsRepository.delete` **only after a confirmed keychain write**. A failed write keeps the row and surfaces `SECRET_STORAGE_UNAVAILABLE` (no data loss, no silent plaintext re-creation). `app_settings` needs no schema change.
+- **`process_logs` remains deferred**: the phase title's "Telemetry" adds **no** `process_logs` table or migration (deviation C3); the bounded `eventBus` + `logger` + toasts are the telemetry surface. The section-3 `process_logs` sketch and its section-4 indexes remain unimplemented.
+- **`auth_sessions` unchanged**: session cookies stay AES-256-GCM encrypted at rest; session purge is a data delete through the existing repository, not a schema change.
+
 ---
 
 ## 3. Relational Schema & Table Definitions

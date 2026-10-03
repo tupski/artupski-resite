@@ -333,3 +333,30 @@ The Scan route (`src/routes/ScanRoute.tsx`) implements the configuration + execu
 - **Progress & console**: a real progress bar (`aria-valuenow`) plus scanned/discovered counts from the frontier, a bounded live activity log (`aria-live="polite"`), and a discovered-pages list. Nothing is simulated.
 - **Keyboard & focus**: deliberate focus movement - to **Cancel scan** when a crawl starts, and to the result/progress region when it settles. All controls are keyboard-operable with visible labels.
 - **Deferred**: authentication modal (section 2.3), the multi-stage stepper, screenshots/assets, and technology/responsive tabs remain later phases and are not shown.
+
+## 7a. Phase 15 Settings Screen, Toast & Error Boundary (as built)
+
+Phase 15 does not add a new design language; it extends the existing `PageShell` + `Panel` layout using the
+section-3 token system (no MUI/AntD; `anti-ui-slop`).
+
+- **Settings screen** (`src/routes/SettingsRoute.tsx`): **Appearance** (theme radios + compact density,
+  retained), **AI provider** (retained `AiProviderPanel` — presets, base URL, model, masked key,
+  connection test), **Crawler defaults** (new `CrawlerSettingsPanel`: max depth 1-5, max pages 1-200,
+  run-headless, capture-viewports, generate-blueprint; out-of-range/non-numeric entries show an
+  actionable inline error and are never committed while invalid), **Security & privacy** (new
+  `SecuritySettingsPanel`: honest key status `present | absent | unavailable`, **Revoke key**, captured-session
+  **purge**, and a plain "secrets are never logged or exported" statement), and **Workspace** (replaces the
+  former "Not configured (later phase)" placeholder with the real sandbox location, or an honest
+  unavailable state). **Concurrency is deliberately not a control** — the browser worker fixes it at 1, so
+  the panel says so plainly instead of rendering a dead dial.
+- **Toast region** (`src/components/common/ToastRegion.tsx`): fixed, non-blocking, bottom-right, stacked
+  (max 5), each with a tone icon + message + optional recovery action + dismiss. `aria-live="polite"` for
+  info/success/warning, `aria-live="assertive"` (`role="alert"`) for danger. Auto-dismiss 6 s, pause on
+  hover/focus, sticky while actionable, `Escape` dismisses the most recent. Rendered once by the `App` root
+  (`ToastRegionProvider` makes the shell's instance defer — no double-mount).
+- **Error-boundary fallback** (`src/components/common/ErrorBoundary.tsx`): a compact `role="alert"` panel
+  ("Something went wrong") with the **scrubbed** message (never `error.stack`), focus moved to the heading,
+  and three actions — **Try again** (resets the subtree), **Reload application**, **Copy error details**.
+- **States**: every new surface has honest `checking | present | absent | unavailable` / empty / error
+  states; nothing is fabricated. Chrome stays within the existing header/sidebar grid; toasts are an overlay,
+  not a layout shift.

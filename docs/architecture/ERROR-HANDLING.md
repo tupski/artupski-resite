@@ -49,6 +49,11 @@ System failure modes taxonomy, structured error schemas, recovery strategies, an
 | `EXPORT_` | `EXPORT_READ_FAILED` | Filesystem | Listing or reading a source file beneath the project root failed. |
 | `EXPORT_` | `EXPORT_WRITE_FAILED` | Filesystem | Writing the export artifact (ZIP archive or folder) failed. |
 | `EXPORT_` | `EXPORT_DOC_GENERATION_FAILED` | Generation | Generating the Markdown documentation set failed. (An oversized document is reported per-document as `EXPORT_DOC_TOO_LARGE` and never truncates the set.) |
+| `SECRET_` | `SECRET_STORAGE_UNAVAILABLE` | IO / Keychain | No usable OS credential store exists, so the key is not persisted (fail closed); a legacy plaintext key is used for the session only and never re-created. |
+| `SECRET_` | `SECRET_READ_FAILED` | IO / Keychain | Reading a secret from the OS credential store failed, or the account slug was invalid. |
+| `SECRET_` | `SECRET_WRITE_FAILED` | IO / Keychain | Writing or deleting a secret in the OS credential store failed, or the account slug was invalid. |
+
+The `SECRET_*` codes (Phase 15) reuse the existing **`io`** category (secret storage is a native/IO concern); **no new `ErrorCategory` is added** (deviation C7). The message and `suggestedAction` never contain key material.
 
 ---
 

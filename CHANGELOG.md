@@ -9,6 +9,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 15 - Settings, keychain key storage, error boundary & toasts
+
+Completes the settings surface and the security/error-hardening items Phases 1-14 deferred: a full
+Settings screen, **OS-keychain API-key storage** (moving the key off plaintext SQLite), secret
+redaction at the logging boundary, a global React **error boundary**, and an error-notification
+**toast** system. It is a **UI + service + narrow native** increment: the first new Rust command
+surface since Phase 9 (a keychain boundary) and the first shared UI chrome under
+`src/components/common/`. `WORKER_PROTOCOL_VERSION` stays `1` and there is **no SQLite migration**
+(`001`-`008` checksums remain stable).
+
+- **Settings screen** (`src/routes/SettingsRoute.tsx`): Appearance and AI-provider panels are retained;
+  new `CrawlerSettingsPanel` (persisted max depth 1-5, max pages 1-200, run-headless,
+  capture-viewports, generate-blueprint — re-clamped in `settingsStore.ts` and seeded into the Scan
+  screen) and `SecuritySettingsPanel` (honest key state `present | absent | unavailable`, **Revoke
+  key**, captured-session **purge**, "secrets are never logged or exported" note). The "Not configured
+  (later phase)" Workspace placeholder is replaced with a real sandbox-location panel. **Crawler
+  concurrency is not exposed** — the browser worker fixes it at 1 (`crawlLimits.ts`), stated plainly
+  rather than shipped as a dead control.
+- **OS-keychain key storage**: `src-tauri/src/secret.rs` (new, `keyring` crate v3) exposes exactly
+  `secret_available` / `secret_get` / `secret_set` / `secret_delete` over the OS credential store
+  (service `com.artupski.resite.apikeys`, account = provider slug `^[a-z0-9_-]{1,64}$`, value capped at
+  2560 bytes); `src/services/security/keychain.ts` wraps it with `IpcResult` mapping and honest
+  `SECRET_STORAGE_UNAVAILABLE`. `src/services/ai/config.ts` reads keychain-first, migrates a legacy
+  `app_settings.ai.credentials` value once and deletes the plaintext row **only after a confirmed
+  keychain write**, and **fails closed** when no OS store is available — plaintext is never
+  re-introduced. `src-tauri/Cargo.toml` adds the `keyring` dependency (`windows-native`,
+  `apple-native`, `sync-secret-service`).
+- **Secret redaction** (`src/services/security/redaction.ts`): `scrubSecrets` (non-mutating, recursive;
+  reuses `redactSecrets` plus an exact `apiKey`/`key`/`x-api-key` pass) and `createRedactingSink`; the
+  logger's default console sink is wrapped so metadata/error details are scrubbed at the sanctioned
+  console boundary. `security.*` payloads carry ids/booleans/codes only — never a key value.
+- **Global error boundary** (`src/components/common/ErrorBoundary.tsx`): a class boundary (no React 18
+  hook equivalent, no new dependency) around the routed tree with "Try again" (resets the subtree),
+  "Reload application", and "Copy error details"; the raw `error.stack` is never rendered as UI text,
+  focus moves to the panel heading, and the region is `role="alert"`.
+- **Toast system** (`src/components/common/ToastRegion.tsx`, `src/components/common/errorBridge.ts`,
+  `src/stores/uiStore.ts`): the existing `notices` model gains `tone`/`action`/`durationMs` and a
+  bounded (max 5) queue; an `aria-live` overlay renders them (danger assertive, others polite,
+  auto-dismiss 6 s with pause-on-hover/focus, sticky when actionable, `Escape` dismisses). The bridge
+  maps unexpected `process.exited` / `process.failed` and global `error`/`unhandledrejection` events to
+  scrubbed notices and never rethrows into the render tree.
+- **Events & errors**: `src/services/infra/eventBus.ts` adds the bounded `security` domain
+  (`security.key_stored`, `security.key_revoked`, `security.key_unavailable`; payloads carry a provider
+  id / boolean / code only — never the key). `src/services/infra/errors.ts` appends
+  `SECRET_STORAGE_UNAVAILABLE`, `SECRET_READ_FAILED`, `SECRET_WRITE_FAILED` (reusing the `io` category;
+  no new `ErrorCategory`).
+- **Tests**: security **key-leakage** suites (`src/services/security/__tests__/keychain.test.ts`,
+  `redaction.test.ts`) assert the key never reaches `app_settings`, a log entry, or an emitted event;
+  **error-boundary trigger** tests (`src/components/common/ErrorBoundary.test.tsx`) assert a thrown
+  child renders the fallback (no stack), `role="alert"`, focus movement, and each recovery action; plus
+  toast (`ToastRegion.test.tsx`, `uiStore.test.ts`), settings (`CrawlerSettingsPanel.test.tsx`,
+  `SecuritySettingsPanel.test.tsx`, `settingsStore.test.ts`), bridge (`errorBridge.test.ts`), and
+  keychain migration/fail-closed (`ai/__tests__/config.test.ts`).
+- **Known limitations** (honest): a real OS-keychain round-trip is **not CI-assertable** without a live
+  secret store — the default suite verifies the honest unavailable path; the key is held in memory
+  during an AI request and **no zeroization** is added; the session-KDF seed remains a per-install
+  `app_settings` value (`SECURITY.md` §3.3), not a keychain master secret.
+- **Deviations** (see `docs/impl-plan/phase-15-impl-plan.md` §20, C1-C8): `keyring` crate for the OS
+  store; no crawler-concurrency control; "Telemetry" adds no `process_logs` persistence; the seed stays
+  in `app_settings`; a class error boundary; the toast system extends `uiStore`; `SECRET_*` reuses the
+  `io` category; `format:check` remains pre-existing RED and is not fixed.
+
 ### Phase 14 - Project documentation & export engine
 
 Auto-generates a small, honest Markdown documentation set for a completed Phase 12 generated project

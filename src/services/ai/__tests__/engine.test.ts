@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { AICompletionResponse, IAIProvider } from '../../../types/ai';
 import { createAiEngine } from '../engine';
-import type { AISettingsAccess } from '../config';
+import type { AIKeychainAccess, AISettingsAccess } from '../config';
+import type { SecretResult } from '../../security/keychain';
 import { eventBus, type AppEventType } from '../../infra/eventBus';
 
 function memoryAccess(
@@ -16,6 +17,29 @@ function memoryAccess(
       store.set(key, value);
     },
     delete: async (key) => store.delete(key)
+  };
+}
+
+/** In-memory keychain double so the engine never touches a real OS store. */
+function memoryKeychain(seed: Record<string, string> = {}): AIKeychainAccess & {
+  store: Map<string, string>;
+} {
+  const store = new Map(Object.entries(seed));
+  return {
+    store,
+    available: async () => true,
+    get: async (account): Promise<SecretResult> => ({
+      ok: true,
+      value: store.has(account) ? (store.get(account) as string) : null
+    }),
+    set: async (account, value) => {
+      store.set(account, value);
+      return { ok: true };
+    },
+    delete: async (account) => {
+      store.delete(account);
+      return { ok: true };
+    }
   };
 }
 
@@ -100,10 +124,11 @@ describe('createAiEngine', () => {
     expect(result.valid).toBe(false);
   });
 
-  it('saves config and key and emits ai.config_saved with hasApiKey only', async () => {
+  it('saves config and key to the keychain and emits ai.config_saved with hasApiKey only', async () => {
     const access = memoryAccess();
+    const keychain = memoryKeychain();
     const events = collectEvents();
-    const engine = createAiEngine({ settings: access });
+    const engine = createAiEngine({ settings: access, keychain });
     const saved = await engine.saveConfig(
       {
         providerId: 'openai',
@@ -118,9 +143,46 @@ describe('createAiEngine', () => {
 
     expect(saved.ok).toBe(true);
     expect(events.types).toContain('ai.config_saved');
-    // The secret must live only in the credentials key, never the config blob.
+    // The secret must live only in the keychain, never in app_settings.
     expect(access.store.get('ai.config')).not.toContain('sk-secret');
-    expect(access.store.get('ai.credentials')).toContain('sk-secret');
+    expect(access.store.has('ai.credentials')).toBe(false);
+    expect(keychain.store.get('openai')).toBe('sk-secret');
+  });
+
+  it('surfaces SECRET_STORAGE_UNAVAILABLE from saveConfig without crashing', async () => {
+    const access = memoryAccess();
+    const keychain = memoryKeychain();
+    keychain.set = async () => ({
+      ok: false,
+      error: {
+        code: 'SECRET_STORAGE_UNAVAILABLE',
+        category: 'io',
+        message: 'no store',
+        severity: 'warning',
+        recoverable: true,
+        retryable: false,
+        suggestedAction: 'unlock the store',
+        timestamp: new Date().toISOString()
+      }
+    });
+    const engine = createAiEngine({ settings: access, keychain });
+    const saved = await engine.saveConfig(
+      {
+        providerId: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o-mini',
+        timeoutMs: 60000,
+        updatedAt: ''
+      },
+      'sk-secret'
+    );
+
+    expect(saved.ok).toBe(false);
+    if (!saved.ok) {
+      expect(saved.error.code).toBe('SECRET_STORAGE_UNAVAILABLE');
+    }
+    // Fail closed: the key is not persisted to plaintext.
+    expect(access.store.has('ai.credentials')).toBe(false);
   });
 
   it('runs a generation task through the pipeline and emits lifecycle events', async () => {

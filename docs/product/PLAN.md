@@ -560,6 +560,7 @@ and types in `src/types/export.ts`. `WORKER_PROTOCOL_VERSION` stays `1`.
 ---
 
 ## Phase 15: Settings, Telemetry, Security & Error Handling Hardening
+- **Status**: COMPLETE (see the Phase 15 implementation note below and `docs/impl-plan/phase-15-impl-plan.md`).
 - **Goal**: Finalize application settings, credential encryption, error boundaries, and crash recovery.
 - **Scope**: Settings UI, API key secure storage, global React error boundary, error notification toast system.
 - **Dependencies**: All prior phases.
@@ -572,6 +573,65 @@ and types in `src/types/export.ts`. `WORKER_PROTOCOL_VERSION` stays `1`.
 - **Acceptance Criteria**: Invalid configurations surface actionable errors without app crashes.
 - **Potential Risks**: Unhandled exceptions in background workers breaking IPC bridge.
 - **Verification**: Provide invalid AI URL; confirm clean error toast and recovery option.
+
+### Phase 15 Implementation Notes (as built)
+
+Delivered as a **UI + service + narrow native** increment: it adds the first new Rust command surface
+since Phase 9 (an OS-keychain boundary) and the first shared UI chrome under `src/components/common/`,
+while reusing every existing store, event, error, and provider abstraction. `WORKER_PROTOCOL_VERSION`
+stays `1`; **no SQLite migration** is added (`001`-`008` checksums remain stable).
+
+- **Settings screen completed** (`src/routes/SettingsRoute.tsx`): the Appearance and AI-provider panels
+  are retained; two new panels are mounted — `CrawlerSettingsPanel` (persisted max depth 1-5, max pages
+  1-200, run-headless, capture-viewports, generate-blueprint; the values are defensively re-clamped in
+  `settingsStore.ts` and seed the Scan screen) and `SecuritySettingsPanel` (honest API-key state
+  `present | absent | unavailable` + **Revoke key**, captured-session **purge**, and a plain "secrets
+  are never logged or exported" statement). The former "Not configured (later phase)" Workspace
+  placeholder is replaced with a real sandbox-location panel. **Concurrency is deliberately not a
+  control** — the browser worker fixes it at 1 (`crawlLimits.ts`), so the panel states that plainly
+  instead of shipping a dead dial (deviation C2).
+- **OS-keychain API-key storage** (`src-tauri/src/secret.rs` + `src/services/security/keychain.ts`):
+  a narrow Rust boundary (`keyring` crate v3) exposes exactly `secret_available` / `secret_get` /
+  `secret_set` / `secret_delete` over the OS credential store (service `com.artupski.resite.apikeys`,
+  account = provider slug `^[a-z0-9_-]{1,64}$`, value capped at 2560 bytes). The frontend can never
+  choose a service or path. `src/services/ai/config.ts` reads the key **keychain-first**, migrates any
+  legacy `app_settings.ai.credentials` value once and deletes the plaintext row **only after a
+  confirmed keychain write**, and **fails closed** (`SECRET_STORAGE_UNAVAILABLE`) when no OS store is
+  available — plaintext is never re-introduced. This is the phase's only new Rust dependency (C1).
+- **Secret redaction at every boundary** (`src/services/security/redaction.ts`): `scrubSecrets`
+  (non-mutating, recursive, reuses `redactSecrets` plus an exact `apiKey`/`key`/`x-api-key` pass) and
+  `createRedactingSink`; the logger's default console sink is wrapped so metadata and error details are
+  scrubbed at the sanctioned console boundary. `security.*` payloads carry ids/booleans/codes only —
+  never a key value.
+- **Global error boundary** (`src/components/common/ErrorBoundary.tsx`): a class boundary (React 18 has
+  no hook equivalent — C5) wraps the routed tree with an honest recovery panel ("Try again" resets the
+  subtree, "Reload application", "Copy error details"). The raw `error.stack` is never rendered as UI
+  text; focus moves to the panel heading and the region is `role="alert"`.
+- **Toast system** (`src/components/common/ToastRegion.tsx` + `src/components/common/errorBridge.ts` +
+  `src/stores/uiStore.ts`): the existing `notices` model gains `tone`/`action`/`durationMs` and a
+  bounded (max 5) queue; an `aria-live` overlay renders them (danger assertive, others polite,
+  auto-dismiss 6 s with pause-on-hover/focus, sticky when actionable, `Escape` dismisses). The bridge
+  turns `process.exited` (unexpected) / `process.failed` and global `error`/`unhandledrejection` events
+  into scrubbed notices and never rethrows into the render tree.
+- **Tests (PLAN-mandated + supporting)**: security **key-leakage** tests (`src/services/security/__tests__/`)
+  assert the key never reaches `app_settings`, a log entry, or an emitted event; **error-boundary
+  trigger** tests (`src/components/common/ErrorBoundary.test.tsx`) assert a thrown child renders the
+  fallback (no stack), `role="alert"`, focus movement, and each recovery action; plus toast, settings,
+  keychain, redaction, and `ai/config` migration/fail-closed suites.
+- **Known limitations (honest)**: a real OS-keychain round-trip is **not CI-assertable** without a live
+  secret store — the default suite verifies the honest unavailable path; the key is held in memory
+  during an AI request and Phase 15 adds **no zeroization**; the session-KDF seed remains a per-install
+  `app_settings` value (C4), not a keychain master secret.
+- **Deferred**: `process_logs` telemetry persistence (C3), moving the session-KDF seed to the keychain
+  (C4), and production wiring of a user-visible export settings screen.
+- **Recorded deviations** (see `docs/impl-plan/phase-15-impl-plan.md` §20, C1-C8): `keyring` crate for
+  the OS store; no crawler-concurrency control; "Telemetry" adds no persistence; the seed stays in
+  `app_settings`; a class error boundary; the toast system extends `uiStore`; `SECRET_*` reuses the
+  `io` category; `format:check` remains pre-existing RED and is not fixed.
+- **Verification (executed in this phase)**: `typecheck`, `lint`, `test` (**986 passed / 25 skipped**),
+  `build`, `cargo check`, `cargo clippy --all-targets`, the Phase 15 focused suites, the regression
+  suites, and the opt-in `RUN_EXPORT_E2E=1` exporter suite — all PASS. `format:check` remains
+  pre-existing RED (repo-wide, not a gate).
 
 ---
 

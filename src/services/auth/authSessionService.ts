@@ -321,6 +321,32 @@ export async function clearSession(projectId: string): Promise<AuthServiceResult
 }
 
 /**
+ * Cryptographic deletion of EVERY captured session across all projects ("Purge
+ * captured sessions"). Removes the ciphertext rows outright; the count is the
+ * honest number of sessions that existed. A purge when none exist is success
+ * with `0` - never a fabricated removal.
+ */
+export async function purgeAllSessions(): Promise<AuthServiceResult<number>> {
+  if (storageService.getState() !== 'ready') {
+    return {
+      ok: false,
+      error: authError(
+        'STORAGE_NOT_READY',
+        'Cannot purge sessions: local storage is not ready.',
+        'Retry once storage is ready.'
+      )
+    };
+  }
+  const removed = await storageService.getRepositories().authSessions.deleteAll();
+  if (removed > 0) {
+    // No project id: this is a global, cross-project purge.
+    eventBus.emit(createEvent('auth.session_cleared', { projectId: '', removed }));
+    logger.child('auth').info('All sessions purged', { removed });
+  }
+  return { ok: true, data: removed };
+}
+
+/**
  * True when a URL is a login-looking route. Re-exported through this service so
  * callers do not reach into the auth type module directly.
  */

@@ -8,8 +8,11 @@ import {
   loadAIKey,
   saveAIConfig,
   saveAIKey,
+  type AIKeychainAccess,
   type AISettingsAccess
 } from '../config';
+import { createStructuredError, type StructuredError } from '../../infra/errors';
+import type { SecretResult } from '../../security/keychain';
 
 /** In-memory settings accessor mirroring the `app_settings` repository contract. */
 function memoryAccess(): AISettingsAccess & { store: Map<string, string> } {
@@ -23,6 +26,50 @@ function memoryAccess(): AISettingsAccess & { store: Map<string, string> } {
     delete: async (key) => store.delete(key)
   };
 }
+
+/** In-memory keychain double so no real OS credential store is touched. */
+function memoryKeychain(seed: Record<string, string> = {}): AIKeychainAccess & {
+  store: Map<string, string>;
+  failWith?: StructuredError;
+} {
+  const store = new Map(Object.entries(seed));
+  const access: AIKeychainAccess & { store: Map<string, string>; failWith?: StructuredError } = {
+    store,
+    failWith: undefined,
+    available: async () => access.failWith === undefined,
+    get: async (account): Promise<SecretResult> => {
+      if (access.failWith) {
+        return { ok: false, error: access.failWith };
+      }
+      return { ok: true, value: store.has(account) ? (store.get(account) as string) : null };
+    },
+    set: async (account, value) => {
+      if (access.failWith) {
+        return { ok: false, error: access.failWith };
+      }
+      store.set(account, value);
+      return { ok: true };
+    },
+    delete: async (account) => {
+      if (access.failWith) {
+        return { ok: false, error: access.failWith };
+      }
+      store.delete(account);
+      return { ok: true };
+    }
+  };
+  return access;
+}
+
+function unavailableError(): StructuredError {
+  return createStructuredError({
+    code: 'SECRET_STORAGE_UNAVAILABLE',
+    category: 'io',
+    message: 'no store'
+  });
+}
+
+const LEGACY_KEY = 'sk-legacy-secret';
 
 describe('AI configuration persistence (no migration; app_settings)', () => {
   it('returns the default config when nothing is stored', async () => {
@@ -53,35 +100,99 @@ describe('AI configuration persistence (no migration; app_settings)', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('keeps the API key in a separate key from the config blob', async () => {
+  it('stores the API key in the keychain, never in app_settings', async () => {
     const access = memoryAccess();
+    const keychain = memoryKeychain();
     await saveAIConfig(
       { ...DEFAULT_AI_CONFIG, baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
       access
     );
-    await saveAIKey('sk-super-secret', access);
+    const saved = await saveAIKey('sk-super-secret', access, keychain, 'openai');
 
+    expect(saved.ok).toBe(true);
     const configBlob = access.store.get(AI_CONFIG_KEY) ?? '';
     expect(configBlob).not.toContain('sk-super-secret');
-    expect(access.store.has(AI_CREDENTIALS_KEY)).toBe(true);
+    // The plaintext credentials row is never written.
+    expect(access.store.has(AI_CREDENTIALS_KEY)).toBe(false);
+    expect(keychain.store.get('openai')).toBe('sk-super-secret');
 
-    const key = await loadAIKey(access);
+    const key = await loadAIKey(access, keychain, 'openai');
     expect(key.ok && key.apiKey).toBe('sk-super-secret');
   });
 
-  it('clears the stored key when saving an empty string', async () => {
+  it('clears the keychain entry when saving an empty string', async () => {
     const access = memoryAccess();
-    await saveAIKey('sk-abc', access);
-    await saveAIKey('', access);
-    const key = await loadAIKey(access);
+    const keychain = memoryKeychain({ openai: 'sk-abc' });
+    await saveAIKey('', access, keychain, 'openai');
+    const key = await loadAIKey(access, keychain, 'openai');
     expect(key.ok && key.apiKey).toBeNull();
-    expect(access.store.has(AI_CREDENTIALS_KEY)).toBe(false);
+    expect(keychain.store.has('openai')).toBe(false);
   });
 
   it('returns null for a malformed config blob', async () => {
     const access = memoryAccess();
     await access.set(AI_CONFIG_KEY, 'not-json');
     expect(await loadAIConfig(access)).toEqual(DEFAULT_AI_CONFIG);
+  });
+});
+
+describe('AI key keychain-first read and legacy migration', () => {
+  it('prefers the keychain entry when present', async () => {
+    const access = memoryAccess();
+    const keychain = memoryKeychain({ openai: 'sk-from-keychain' });
+    const result = await loadAIKey(access, keychain, 'openai');
+    expect(result.ok && result.apiKey).toBe('sk-from-keychain');
+  });
+
+  it('migrates a legacy plaintext row to the keychain and deletes it on success', async () => {
+    const access = memoryAccess();
+    const keychain = memoryKeychain();
+    await access.set(AI_CREDENTIALS_KEY, JSON.stringify({ apiKey: LEGACY_KEY }));
+
+    const result = await loadAIKey(access, keychain, 'openai');
+
+    expect(result.ok && result.apiKey).toBe(LEGACY_KEY);
+    expect(keychain.store.get('openai')).toBe(LEGACY_KEY);
+    // The plaintext row is removed only after a confirmed keychain write.
+    expect(access.store.has(AI_CREDENTIALS_KEY)).toBe(false);
+  });
+
+  it('fails closed when the keychain is unavailable: no plaintext write, honest warning', async () => {
+    const access = memoryAccess();
+    const keychain = memoryKeychain();
+    keychain.failWith = unavailableError();
+
+    const saved = await saveAIKey('sk-new', access, keychain, 'openai');
+    expect(saved.ok).toBe(false);
+    if (!saved.ok) {
+      expect(saved.error.code).toBe('SECRET_STORAGE_UNAVAILABLE');
+    }
+    // Fail closed: nothing was written to app_settings.
+    expect(access.store.has(AI_CREDENTIALS_KEY)).toBe(false);
+  });
+
+  it('keeps the legacy row and warns when the migration write fails', async () => {
+    const access = memoryAccess();
+    const keychain = memoryKeychain();
+    keychain.failWith = unavailableError();
+    await access.set(AI_CREDENTIALS_KEY, JSON.stringify({ apiKey: LEGACY_KEY }));
+
+    const result = await loadAIKey(access, keychain, 'openai');
+
+    // The key is still usable for this run...
+    expect(result.ok && result.apiKey).toBe(LEGACY_KEY);
+    // ...the plaintext row is retained (no data loss)...
+    expect(access.store.has(AI_CREDENTIALS_KEY)).toBe(true);
+    // ...and the failure is surfaced honestly.
+    expect(result.ok && result.warning?.code).toBe('SECRET_STORAGE_UNAVAILABLE');
+  });
+
+  it('returns no key when neither keychain nor legacy row exists', async () => {
+    const access = memoryAccess();
+    const keychain = memoryKeychain();
+    const result = await loadAIKey(access, keychain, 'openai');
+    expect(result.ok && result.apiKey).toBeNull();
+    expect(access.store.has(AI_CREDENTIALS_KEY)).toBe(false);
   });
 });
 

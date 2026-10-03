@@ -22,6 +22,19 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# OS credential store for the AI provider API key (SECURITY.md section 2.1).
+# The platform-specific backends are target-gated by the crate, so the
+# `sync-secret-service` feature only pulls DBus/Secret-Service dependencies on
+# Linux (which needs an active Secret Service/DBus daemon - documented in the
+# phase-15 plan, C1). Windows uses the Credential Manager; macOS the Keychain.
+# `linux-native` (keyutils) is deliberately NOT used because it is
+# session-scoped and would lose the key on reboot.
+keyring = { version = "3", features = [
+    "windows-native",
+    "apple-native",
+    "sync-secret-service",
+] }
+
 [profile.release]
 panic = "abort"
 codegen-units = 1

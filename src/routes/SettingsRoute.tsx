@@ -2,9 +2,14 @@ import { useEffect } from 'react';
 import { PageShell } from '../components/layout/PageShell';
 import { Panel } from '../components/ui/Panel';
 import { AiProviderPanel } from '../components/settings/AiProviderPanel';
+import { CrawlerSettingsPanel } from '../components/settings/CrawlerSettingsPanel';
+import { SecuritySettingsPanel } from '../components/settings/SecuritySettingsPanel';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useAiStore } from '../stores/aiStore';
 import { getPreset } from '../services/ai';
+import { notifyStructuredError } from '../components/common/errorBridge';
+import type { ErrorCode } from '../services/infra/errors';
+import { storageService } from '../services/storage';
 import { THEME_MODE_LABEL, type ThemeMode } from '../types/theme';
 import { IconMonitor, IconMoon, IconSun } from '../components/ui/icons';
 import { cn } from '../lib/cn';
@@ -12,7 +17,7 @@ import { cn } from '../lib/cn';
 const THEME_OPTIONS: { value: ThemeMode; icon: typeof IconSun; hint: string }[] = [
   { value: 'dark', icon: IconMoon, hint: 'Default. Low-glare for long sessions.' },
   { value: 'light', icon: IconSun, hint: 'Bright backgrounds.' },
-  { value: 'system', icon: IconMonitor, hint: 'Follow the operating system.' },
+  { value: 'system', icon: IconMonitor, hint: 'Follow the operating system.' }
 ];
 
 export function SettingsRoute() {
@@ -45,6 +50,30 @@ export function SettingsRoute() {
       store.setConfigField('model', preset.defaultModel);
     }
   };
+
+  // Save failures already render inline; also surface them as an actionable
+  // toast so a rejected configuration (e.g. an invalid base URL) is never a
+  // silent failure. The inline error remains the primary affordance.
+  const handleSaveAi = async () => {
+    const ok = await useAiStore.getState().saveConfig();
+    if (!ok) {
+      const error = useAiStore.getState().error;
+      if (error) {
+        notifyStructuredError({
+          code: error.code as ErrorCode,
+          category: 'ai',
+          message: error.message,
+          severity: 'error',
+          recoverable: true,
+          retryable: false,
+          suggestedAction: error.suggestedAction,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+  };
+
+  const workspaceLocation = storageService.getDatabaseLocation();
 
   return (
     <PageShell title="Settings" description="Application preferences, stored locally.">
@@ -125,22 +154,47 @@ export function SettingsRoute() {
             onChangeField={(key, value) => useAiStore.getState().setConfigField(key, value)}
             onChangeApiKey={(value) => useAiStore.getState().setApiKeyInput(value)}
             onSelectPreset={handleSelectPreset}
-            onSave={() => void useAiStore.getState().saveConfig()}
+            onSave={() => void handleSaveAi()}
             onTest={() => void useAiStore.getState().testConnection()}
           />
           <p className="mt-3 text-caption text-text-muted">
-            The API key is stored locally in the application database for this phase. Migration to
-            the OS keychain is deferred to Phase 15.
+            The API key is stored in the OS keychain, never in the application database. Where no
+            OS credential store is available the key is not persisted (fail closed) and the state
+            above says so honestly.
           </p>
+        </Panel>
+
+        <Panel title="Crawler defaults">
+          <p className="mb-3 max-w-lg text-caption text-text-muted">
+            Defaults for every new crawl. The Scan screen seeds its configuration from these values
+            and still lets you adjust them per run.
+          </p>
+          <CrawlerSettingsPanel />
+        </Panel>
+
+        <Panel title="Security & privacy">
+          <SecuritySettingsPanel />
         </Panel>
 
         <Panel title="Workspace">
           <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-0.5">
-              <dt className="text-caption text-text-secondary">Local storage</dt>
-              <dd className="text-body text-text-primary">Not configured (later phase)</dd>
+              <dt className="text-caption text-text-secondary">App data location</dt>
+              <dd className="break-all font-mono text-code text-text-primary">
+                {workspaceLocation ?? 'Unavailable until local storage is ready.'}
+              </dd>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <dt className="text-caption text-text-secondary">Project storage</dt>
+              <dd className="break-all font-mono text-code text-text-primary">
+                {'AppData/Local/ArtupskiReSite/projects/<project-id>'}
+              </dd>
             </div>
           </dl>
+          <p className="mt-3 text-caption text-text-muted">
+            Everything is stored in the application's sandboxed app-data directory. Nothing is
+            uploaded; the only outbound traffic is the AI endpoint you configure.
+          </p>
         </Panel>
       </div>
     </PageShell>

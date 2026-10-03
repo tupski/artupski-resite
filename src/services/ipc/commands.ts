@@ -328,6 +328,77 @@ export function blueprintDelete(id: string): Promise<IpcResult<void>> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* OS keychain / secret commands (Phase 15)                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Fallback metadata for a secret-store transport failure. */
+const SECRET_READ_FALLBACK = {
+  code: 'SECRET_READ_FAILED',
+  category: 'io'
+} as const;
+
+const SECRET_WRITE_FALLBACK = {
+  code: 'SECRET_WRITE_FAILED',
+  category: 'io'
+} as const;
+
+const SECRET_AVAILABILITY_FALLBACK = {
+  code: 'SECRET_STORAGE_UNAVAILABLE',
+  category: 'io'
+} as const;
+
+/**
+ * Report whether an OS secret store is usable in this environment. A transport
+ * failure is reported as `SECRET_STORAGE_UNAVAILABLE` (fail closed).
+ */
+export function secretAvailable(): Promise<IpcResult<boolean>> {
+  return safeInvoke<boolean>(
+    'secret_available',
+    {},
+    {
+      ...SECRET_AVAILABILITY_FALLBACK,
+      message: 'The OS credential store could not be reached.'
+    }
+  );
+}
+
+/** Read a secret; `null` when no entry exists. The value is never logged. */
+export function secretGet(account: string): Promise<IpcResult<string | null>> {
+  return safeInvoke<string | null>(
+    'secret_get',
+    { account },
+    {
+      ...SECRET_READ_FALLBACK,
+      message: 'Failed to read the secret from the OS credential store.'
+    }
+  );
+}
+
+/** Write (or replace) a secret. An empty value deletes the entry. */
+export function secretSet(account: string, value: string): Promise<IpcResult<void>> {
+  return safeInvoke<void>(
+    'secret_set',
+    { account, value },
+    {
+      ...SECRET_WRITE_FALLBACK,
+      message: 'Failed to write the secret to the OS credential store.'
+    }
+  );
+}
+
+/** Delete a secret. A missing entry is treated as success. */
+export function secretDelete(account: string): Promise<IpcResult<void>> {
+  return safeInvoke<void>(
+    'secret_delete',
+    { account },
+    {
+      ...SECRET_WRITE_FALLBACK,
+      message: 'Failed to delete the secret from the OS credential store.'
+    }
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /* Blueprint lifecycle commands (Phase 9)                                     */
 /* -------------------------------------------------------------------------- */
 

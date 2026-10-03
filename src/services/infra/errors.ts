@@ -65,6 +65,9 @@ export type ErrorCode =
   | 'EXPORT_READ_FAILED'
   | 'EXPORT_WRITE_FAILED'
   | 'EXPORT_DOC_GENERATION_FAILED'
+  | 'SECRET_STORAGE_UNAVAILABLE'
+  | 'SECRET_READ_FAILED'
+  | 'SECRET_WRITE_FAILED'
   | 'UNKNOWN_ERROR';
 
 export interface StructuredError {

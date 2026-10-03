@@ -145,11 +145,23 @@ Artupski ReSite is a desktop application combining a Tauri 2 native layer with a
 - **Logger**: Centralized logging emitting structured JSON logs to both UI console and file storage.
 - **ProcessManager**: Manages life cycles of child processes (Playwright workers, dev preview servers).
 
+#### 3.6a Security Service Layer (as built, Phase 15)
+- **Seam**: `src/services/security/` — `keychain.ts` (the single TypeScript boundary over the native `secret_*` commands; `getSecret`/`setSecret`/`deleteSecret`/`secretAvailable`, account validated against `^[a-z0-9_-]{1,64}$` client-side before any IPC round-trip) and `redaction.ts` (`scrubSecrets`, a non-mutating recursive copy that applies `redactSecrets` plus an exact `apiKey`/`key`/`x-api-key` pass, and `createRedactingSink`, a `LogSink` wrapper). Public surface is `src/services/security/index.ts`. **Main-process TypeScript only** — no worker; `WORKER_PROTOCOL_VERSION` stays `1`.
+- **Keychain-first key storage**: `src/services/ai/config.ts` (`loadAIKey`/`saveAIKey`) reads the key from the OS store first, migrates any legacy `app_settings.ai.credentials` value **once** (write to keychain → delete plaintext row only after a confirmed write), and **fails closed** with `SECRET_STORAGE_UNAVAILABLE` when no OS store exists — plaintext is never re-introduced. `src/services/ai/engine.ts` surfaces that failure honestly.
+- **Redaction at the console boundary**: `src/services/infra/logger.ts` wraps its default console sink with `createRedactingSink` so metadata and error details are scrubbed; registered sinks added via `addSink` are unchanged (a consumer wraps its own sink if it needs scrubbing).
+- **No secret ever crosses a boundary**: `security.*` event payloads carry a provider id / boolean / bounded code only; the key is never rendered (masked input only), logged, or exported.
+
+#### 3.6b Common UI Chrome (as built, Phase 15)
+- **Seam**: `src/components/common/` — `ErrorBoundary.tsx` (a **class** boundary, since React 18 has no hook equivalent for `componentDidCatch`), `ToastRegion.tsx` (the `aria-live` notice overlay), and `errorBridge.ts` (the only module that touches `window.error` / `window.unhandledrejection`; it also subscribes to `process.exited`/`process.failed`). These are the first shared chrome components; no new UI library is added.
+- **Wiring**: `src/app/App.tsx` wraps `RouterProvider` in `ErrorBoundary`, renders `ToastRegion` as a sibling of the routed tree (so a render fault cannot unmount the very chrome that reports it), provides `ToastRegionProvider` (the shell's `ToastRegion` then defers — no double-mount), and starts/`stopErrorBridge()`. Notices live in the extended `src/stores/uiStore.ts` (bounded queue, tone/action/auto-dismiss).
+- **Honest recovery**: the boundary never renders `error.stack`; the bridge never rethrows into the render tree. `src/routes/SettingsRoute.tsx` mounts the new crawler-defaults and security panels (see `UI-SPEC.md` §7a).
+
 ---
 
 ## 4. Rust vs TypeScript Boundary
-- **Rust Responsibility**: Window management, OS-level file system I/O, SQLite database driver initialization, native menu handling, and spawn/kill operations for child processes.
+- **Rust Responsibility**: Window management, OS-level file system I/O, SQLite database driver initialization, native menu handling, spawn/kill operations for child processes, and the **OS credential-store boundary** for AI provider keys.
 - **TypeScript Responsibility**: All business logic, DOM parsing rules, UI state management, scan configuration, AI prompt orchestration, code synthesis algorithms, and view layer rendering.
+- **Native secret command surface (Phase 15)**: `src-tauri/src/secret.rs` exposes exactly four custom commands — `secret_available`, `secret_get`, `secret_set`, `secret_delete` — over the OS credential store via the `keyring` crate. The service id is hard-coded (`com.artupski.resite.apikeys`) and the caller supplies only a bounded `account` slug; there is no generic secret-store passthrough and no path/service/executable is caller-controlled. Writes are size-capped (2560 bytes) and fail closed (no plaintext fallback). These are **custom app commands, not plugin permissions**, so `capabilities/default.json` stays `["core:default"]` (same rationale as the Phase 3 `process_*` commands) and the CSP is unchanged.
 
 ---
 

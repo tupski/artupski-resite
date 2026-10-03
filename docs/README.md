@@ -24,6 +24,13 @@ guidelines and history, see the root files: [`AGENTS.md`](../AGENTS.md),
 | [`WORKER-PROTOCOL.md`](architecture/WORKER-PROTOCOL.md) | Worker stdio JSON protocol and process lifecycle. |
 | [`DATABASE.md`](architecture/DATABASE.md) | Schema, tables, relations, and indexing. |
 
+### Source Modules (as built)
+
+| Module | Description |
+| :--- | :--- |
+| [`src/services/security/`](../src/services/security/) | Phase 15 security services: `keychain.ts` (OS credential-store boundary over the native `secret_*` commands) and `redaction.ts` (`scrubSecrets` + `createRedactingSink`), reusing `redactSecrets`. |
+| [`src/components/common/`](../src/components/common/) | Phase 15 shared UI chrome: `ErrorBoundary.tsx` (global class error boundary), `ToastRegion.tsx` (aria-live notice overlay), and `errorBridge.ts` (worker/global-failure → scrubbed notice). |
+
 ## Specs
 
 | Document | Description |
@@ -68,3 +75,4 @@ guidelines and history, see the root files: [`AGENTS.md`](../AGENTS.md),
 | [`phase-12-impl-plan.md`](impl-plan/phase-12-impl-plan.md) | Full-stack project generator (Phase 12): Vite + React + TS + Tailwind assembly from Blueprint + synthesized components, routes/tokens integration, path safety, resource limits, `project.*` events, and the opt-in real-build E2E. |
 | [`phase-13-impl-plan.md`](impl-plan/phase-13-impl-plan.md) | Visual verification & diff engine (Phase 13): dependency-free PNG codec + pixel diff core, managed loopback server for the generated project, multi-viewport capture/diff service, `diff.*` events, `asset_read` sandbox command, and the side-by-side/slider/diff viewer. |
 | [`phase-14-impl-plan.md`](impl-plan/phase-14-impl-plan.md) | Project documentation & export engine (Phase 14): the `src/services/exporter/` module (`docGenerator.ts`, dependency-free deterministic `zip.ts`, `zipExporter.ts` orchestration) generating `README.md`/`ARCHITECTURE.md`/`COMPONENTS.md` and bundling a generated project to ZIP or folder, with path confinement, reject-not-truncate limits, `export.*` events, and the opt-in `RUN_EXPORT_E2E=1` unzip/verify E2E. |
+| [`phase-15-impl-plan.md`](impl-plan/phase-15-impl-plan.md) | Settings, telemetry, security & error-handling hardening (Phase 15): the completed Settings screen (crawler defaults + security panels), OS-keychain API-key storage (`src-tauri/src/secret.rs` + `src/services/security/keychain.ts`, fail-closed migration off plaintext `app_settings`), secret redaction at the logging boundary, a global `ErrorBoundary`, the `ToastRegion`/`errorBridge` toast system, the `security.*` events, and the `SECRET_*` error codes (deviations C1-C8). |

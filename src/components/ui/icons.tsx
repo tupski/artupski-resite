@@ -121,3 +121,28 @@ export function IconGlobe(props: IconProps) {
     </svg>
   );
 }
+
+export function IconInfo(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 7.8v.3" />
+    </svg>
+  );
+}
+
+export function IconCheck(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 12.5 9.5 18 20 6.5" />
+    </svg>
+  );
+}
+
+export function IconX(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}

@@ -13,7 +13,8 @@ import { BlueprintPanel } from '../components/blueprint/BlueprintPanel';
 import { DiffViewer } from '../components/diff/DiffViewer';
 import { AuthCapturePanel } from '../components/auth/AuthCapturePanel';
 import { SCAN_STATUS_LABEL, type ScanStatus } from '../types/scan';
-import { useScanStore } from '../stores/scanStore';
+import { scanConfigurationFromCrawler, useScanStore } from '../stores/scanStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { useProjectsStore } from '../stores/projectsStore';
 import { useTechnologyStore } from '../stores/technologyStore';
 import { useAuthStore } from '../stores/authStore';
@@ -60,6 +61,7 @@ export function ScanRoute() {
   const setProjectTitle = useScanStore((state) => state.setProjectTitle);
   const configuration = useScanStore((state) => state.configuration);
   const updateConfiguration = useScanStore((state) => state.updateConfiguration);
+  const setConfiguration = useScanStore((state) => state.setConfiguration);
   const status = useScanStore((state) => state.status);
   const progress = useScanStore((state) => state.progress);
   const logs = useScanStore((state) => state.logs);
@@ -149,6 +151,20 @@ export function ScanRoute() {
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
+
+  // Seed the (per-scan editable) configuration from persisted crawler defaults
+  // once on mount. Re-seeding while a crawl is in flight would discard the
+  // configuration that crawl is already using, so it is skipped then. The user
+  // can still change any value on this screen for the current run.
+  const seededFromSettings = useRef(false);
+  useEffect(() => {
+    if (seededFromSettings.current || status === 'scanning') {
+      return;
+    }
+    seededFromSettings.current = true;
+    const crawler = useSettingsStore.getState().crawler;
+    setConfiguration(scanConfigurationFromCrawler(crawler));
+  }, [status, setConfiguration]);
 
   // Keep the selected project in sync with the typed URL so scanning never
   // silently targets the wrong project. A matching project is auto-selected;
@@ -549,6 +565,17 @@ export function ScanRoute() {
               onChange={(event) => updateConfiguration({ headless: event.target.checked })}
             />
             Run headless
+          </label>
+
+          <label className="mt-2 flex items-center gap-2 text-body text-text-secondary">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-brand"
+              checked={configuration.blueprint}
+              disabled={scanning}
+              onChange={(event) => updateConfiguration({ blueprint: event.target.checked })}
+            />
+            Generate blueprint after crawl
           </label>
 
           <fieldset

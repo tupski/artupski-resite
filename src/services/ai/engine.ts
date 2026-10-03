@@ -26,6 +26,7 @@ import {
   loadAIKey,
   saveAIConfig,
   saveAIKey,
+  type AIKeychainAccess,
   type AISettingsAccess
 } from './config';
 import { createAiError } from './errors';
@@ -50,6 +51,8 @@ export type AiSaveConfigResult =
 export interface AiEngineDeps {
   /** Settings access override (tests). Defaults to the live storage layer. */
   settings?: AISettingsAccess;
+  /** Keychain access override (tests). Defaults to the live OS keychain. */
+  keychain?: AIKeychainAccess;
   /** fetch override (tests). */
   fetchImpl?: FetchLike;
   /** Provider override (tests) - bypasses config resolution entirely. */
@@ -79,7 +82,7 @@ async function resolveProvider(deps: AiEngineDeps): Promise<{
   if (deps.provider) {
     return { provider: deps.provider, config };
   }
-  const key = await loadAIKey(deps.settings);
+  const key = await loadAIKey(deps.settings, deps.keychain, config.providerId);
   const apiKey = key.ok ? key.apiKey : null;
   const provider = createProviderFromConfig(config, apiKey, deps.fetchImpl);
   return { provider, config };
@@ -96,17 +99,15 @@ export function createAiEngine(deps: AiEngineDeps = {}): AiEngine {
       }
       let hasApiKey = false;
       if (apiKey !== undefined) {
-        try {
-          await saveAIKey(apiKey, deps.settings);
-        } catch (error) {
-          return {
-            ok: false,
-            error: createAiError('IPC_ERROR', 'Failed to persist the API key.', { cause: error })
-          };
+        const keyResult = await saveAIKey(apiKey, deps.settings, deps.keychain, config.providerId);
+        if (!keyResult.ok) {
+          // Surface the secret-store failure honestly (e.g.
+          // SECRET_STORAGE_UNAVAILABLE) without crashing.
+          return { ok: false, error: keyResult.error };
         }
         hasApiKey = Boolean(apiKey);
       } else {
-        const existing = await loadAIKey(deps.settings);
+        const existing = await loadAIKey(deps.settings, deps.keychain, config.providerId);
         hasApiKey = existing.ok && Boolean(existing.apiKey);
       }
 

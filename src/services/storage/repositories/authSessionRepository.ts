@@ -110,6 +110,20 @@ export class AuthSessionRepository {
     return result.changes;
   }
 
+  /**
+   * Cryptographic deletion of every captured session across all projects
+   * ("Purge captured sessions"). Removes the ciphertext rows outright; no
+   * soft-delete leaves key material behind.
+   */
+  async deleteAll(): Promise<number> {
+    const db = this.context.getDatabase();
+    const result = db.run('DELETE FROM auth_sessions;');
+    if (result.changes > 0) {
+      await this.context.persist();
+    }
+    return result.changes;
+  }
+
   async deleteById(id: string): Promise<number> {
     const db = this.context.getDatabase();
     const result = db.run('DELETE FROM auth_sessions WHERE id = ?;', [id]);

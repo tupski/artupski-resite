@@ -11,6 +11,7 @@ mod asset;
 mod blueprint;
 mod clone;
 mod process;
+mod secret;
 mod storage;
 
 /// Static application identity returned to the frontend.
@@ -78,7 +79,11 @@ pub fn run() {
             process::process_spawn,
             process::process_write,
             process::process_kill,
-            process::process_status
+            process::process_status,
+            secret::secret_available,
+            secret::secret_get,
+            secret::secret_set,
+            secret::secret_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running Artupski ReSite");
