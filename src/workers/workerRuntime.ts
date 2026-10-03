@@ -62,6 +62,25 @@ export function allowlistedNodeCommand(platform: string): string {
   return platform === 'win32' ? 'node.exe' : 'node';
 }
 
+/**
+ * Detect the host platform WITHOUT assuming a Node global.
+ *
+ * Inside Node (`process.platform` exists) the real value is returned. Inside the
+ * Tauri webview there is no `process` global, so the user agent is used instead;
+ * only the `win32` vs non-`win32` distinction matters here because the sole
+ * effect is choosing `node.exe` over `node`. `globalThis` is read defensively so
+ * this never throws a `ReferenceError` in a browser-like runtime.
+ */
+export function detectRuntimePlatform(): string {
+  const nodeProcess = (globalThis as { process?: { platform?: unknown } }).process;
+  if (nodeProcess && typeof nodeProcess.platform === 'string') {
+    return nodeProcess.platform;
+  }
+  const navigatorRef = (globalThis as { navigator?: { userAgent?: unknown } }).navigator;
+  const userAgent = typeof navigatorRef?.userAgent === 'string' ? navigatorRef.userAgent : '';
+  return /Windows/i.test(userAgent) ? 'win32' : 'posix';
+}
+
 /** Absolute packaged worker path inside the resource directory. */
 export function packagedWorkerScriptPath(
   resourceDir: string,
@@ -120,6 +139,30 @@ export function buildWorkerEntrypoint(
   return {
     command: allowlistedNodeCommand(env.platform),
     args,
+    cwd: dirnamePath(script)
+  };
+}
+
+/**
+ * Build the spawn descriptor for a worker whose packaged location is KNOWN.
+ *
+ * This is the packaged-resolution seam used by the Tauri webview: the webview
+ * cannot stat the filesystem (`node:fs` is externalized for the browser) and
+ * has no filesystem module URL (`import.meta.url` is `tauri.localhost`), so the
+ * resource directory reported by `@tauri-apps/api/path` is authoritative. The
+ * `<resourceDir>/workers/<name>/index.js` path is exactly where
+ * `scripts/stageWorkers.mjs` stages the bundled worker, so no existence probe
+ * is required.
+ */
+export function buildPackagedWorkerEntrypoint(
+  resourceDir: string,
+  platform: string,
+  descriptor: WorkerDescriptor
+): WorkerEntrypoint {
+  const script = packagedWorkerScriptPath(resourceDir, descriptor);
+  return {
+    command: allowlistedNodeCommand(platform),
+    args: [script],
     cwd: dirnamePath(script)
   };
 }

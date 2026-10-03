@@ -24,6 +24,10 @@ import { logger } from '../infra/logger';
 import type { ProcessManager } from '../infra/processManager';
 import { createProcessError } from '../infra/processErrors';
 import {
+  resolvePackagedCrawlerEntrypoint,
+  resolveTauriResourceDir
+} from '../../workers/workerEntrypoints';
+import {
   type AuthStorageState,
   type BrowserAvailability,
   type BrowserEngine,
@@ -636,16 +640,19 @@ export async function createDefaultBrowserRuntime(): Promise<BrowserRuntime | nu
 
   const { ProcessManager } = await import('../infra/processManager');
   const { TauriProcessSpawner } = await import('../infra/tauriProcessSpawner');
-  // `@vite-ignore`: this module uses Node builtins and must never enter the
-  // browser bundle. The import only runs inside the Tauri shell. Phase 16 makes
-  // the resolver packaged-aware: it prefers the bundler-staged worker under the
-  // Tauri resource directory and falls back to the co-located dev `.ts`.
-  const workerPathsModule = '../../workers/crawler/workerPaths';
-  const { resolveWorkerEntrypoint } = (await import(/* @vite-ignore */ workerPathsModule)) as {
-    resolveWorkerEntrypoint: () => Promise<{ command: string; args: string[]; cwd: string }>;
-  };
-
-  const entry = await resolveWorkerEntrypoint();
+  // Static import of the webview-safe resolver: it contains NO `node:*` imports
+  // and NO dynamic `/* @vite-ignore */` import (which Vite left unresolved in the
+  // production bundle and which threw `Failed to fetch dynamically imported
+  // module: .../workers/crawler/workerPaths`). The packaged path is derived from
+  // the Tauri resource directory, where `scripts/stageWorkers.mjs` stages the
+  // bundled `workers/crawler/index.js`.
+  const resourceDir = await resolveTauriResourceDir();
+  if (!resourceDir) {
+    throw createProcessError('PROCESS_SPAWN_FAILED', {
+      message: 'The Tauri resource directory could not be resolved.'
+    });
+  }
+  const entry = resolvePackagedCrawlerEntrypoint(resourceDir);
   const manager = new ProcessManager({
     name: 'crawler',
     spawner: new TauriProcessSpawner(),

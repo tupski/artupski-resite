@@ -13,7 +13,9 @@ import { describe, expect, it } from 'vitest';
 import {
   ALLOWED_WORKER_COMMANDS,
   allowlistedNodeCommand,
+  buildPackagedWorkerEntrypoint,
   buildWorkerEntrypoint,
+  detectRuntimePlatform,
   packagedWorkerScriptPath,
   resolveWorkerScriptPath,
   type WorkerDescriptor,
@@ -21,6 +23,11 @@ import {
 } from '../../workerRuntime';
 import { resolveWorkerEntrypoint } from '../workerPaths';
 import { resolveCloneServerEntrypoint } from '../../cloneServer/workerPaths';
+import {
+  resolvePackagedCloneServerEntrypoint,
+  resolvePackagedCrawlerEntrypoint,
+  resolveTauriResourceDir
+} from '../../workerEntrypoints';
 
 const CRAWLER: WorkerDescriptor = { name: 'crawler', devFileName: 'index.ts' };
 
@@ -147,5 +154,48 @@ describe('clone server workerPaths - real resolution outside the packaged shell'
     expect(entry.args[0]).toBe('--experimental-strip-types');
     expect(entry.args[1]?.endsWith('index.ts')).toBe(true);
     expect(existsSync(entry.args[1] as string)).toBe(true);
+  });
+});
+
+describe('workerRuntime - buildPackagedWorkerEntrypoint (webview path)', () => {
+  it('builds a .js descriptor under the resource dir without a filesystem probe', () => {
+    const entry = buildPackagedWorkerEntrypoint('/opt/app/resources', 'linux', CRAWLER);
+    expect(entry.command).toBe('node');
+    expect(entry.args).toEqual(['/opt/app/resources/workers/crawler/index.js']);
+    expect(entry.cwd).toBe('/opt/app/resources/workers/crawler');
+    expect(entry.args[0]?.endsWith('.js')).toBe(true);
+    expect(entry.args).not.toContain('--experimental-strip-types');
+  });
+
+  it('maps the win32 platform to node.exe', () => {
+    const entry = buildPackagedWorkerEntrypoint('C:/app/resources', 'win32', CRAWLER);
+    expect(entry.command).toBe('node.exe');
+    expect(entry.args).toEqual(['C:/app/resources/workers/crawler/index.js']);
+  });
+});
+
+describe('workerRuntime - detectRuntimePlatform', () => {
+  it('reads process.platform when a Node process global is present', () => {
+    expect(detectRuntimePlatform()).toBe(process.platform);
+  });
+});
+
+describe('workerEntrypoints - webview-safe packaged resolution', () => {
+  it('reports no Tauri resource dir outside the shell', async () => {
+    expect(await resolveTauriResourceDir()).toBeNull();
+  });
+
+  it('resolves the packaged crawler worker without touching node:fs', () => {
+    const entry = resolvePackagedCrawlerEntrypoint('/opt/app/resources');
+    expect(ALLOWED_WORKER_COMMANDS).toContain(entry.command);
+    expect(entry.args).toEqual(['/opt/app/resources/workers/crawler/index.js']);
+    expect(entry.cwd).toBe('/opt/app/resources/workers/crawler');
+  });
+
+  it('resolves the packaged clone server worker without touching node:fs', () => {
+    const entry = resolvePackagedCloneServerEntrypoint('/opt/app/resources');
+    expect(ALLOWED_WORKER_COMMANDS).toContain(entry.command);
+    expect(entry.args).toEqual(['/opt/app/resources/workers/cloneServer/index.js']);
+    expect(entry.cwd).toBe('/opt/app/resources/workers/cloneServer');
   });
 });

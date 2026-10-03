@@ -31,6 +31,11 @@ import {
   type WorkerResultPayload
 } from '../infra/workerProtocol';
 import { createScannerError, toScannerError } from './errors';
+import { createProcessError } from '../infra/processErrors';
+import {
+  resolvePackagedCrawlerEntrypoint,
+  resolveTauriResourceDir
+} from '../../workers/workerEntrypoints';
 
 export type ScannerResult<T> = { ok: true; data: T } | { ok: false; error: StructuredError };
 
@@ -280,12 +285,15 @@ export async function createDefaultScannerWorkerClient(): Promise<ScannerWorkerC
 
   const { ProcessManager } = await import('../infra/processManager');
   const { TauriProcessSpawner } = await import('../infra/tauriProcessSpawner');
-  const workerPathsModule = '../../workers/crawler/workerPaths';
-  const { resolveWorkerEntrypoint } = (await import(/* @vite-ignore */ workerPathsModule)) as {
-    resolveWorkerEntrypoint: () => Promise<{ command: string; args: string[]; cwd: string }>;
-  };
-
-  const entry = await resolveWorkerEntrypoint();
+  // Static, webview-safe resolver (no `node:*`, no unresolved `@vite-ignore`
+  // dynamic import); the packaged path comes from the Tauri resource directory.
+  const resourceDir = await resolveTauriResourceDir();
+  if (!resourceDir) {
+    throw createProcessError('PROCESS_SPAWN_FAILED', {
+      message: 'The Tauri resource directory could not be resolved.'
+    });
+  }
+  const entry = resolvePackagedCrawlerEntrypoint(resourceDir);
   const manager = new ProcessManager({
     name: 'crawler',
     spawner: new TauriProcessSpawner(),

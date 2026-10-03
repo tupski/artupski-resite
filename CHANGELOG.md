@@ -23,7 +23,8 @@ docs** increment: `WORKER_PROTOCOL_VERSION` stays `1` and there is **no SQLite m
   `synthesizeComponents` (a deterministic **scripted engine** replaces only the AI provider) -> real
   `generateProject` -> real `exportProject` ZIP -> `readZip` verification of the three docs and every
   source file byte-for-byte (plus a determinism check). `phase16FullPipeline.e2e.test.ts` (opt-in
-  `RUN_BROWSER_TESTS=1`, dedicated fixture port `8100`) runs the authoritative real-Chromium path
+  `RUN_BROWSER_TESTS=1`, dedicated fixture port `8080` — an allowlisted crawler port, deviation C8)
+  runs the authoritative real-Chromium path
   (crawl -> Blueprint -> generate -> real `npm install && build` -> `dist/index.html`) and reports
   **BLOCKED** (skip) when npm/Chromium is unavailable. `phase16Pipeline.perf.test.ts` records
   generate/export timing and byte counts and asserts only invariants (no timing thresholds).
@@ -48,10 +49,11 @@ docs** increment: `WORKER_PROTOCOL_VERSION` stays `1` and there is **no SQLite m
 - **Known limitations** (honest): the packaged app still requires the host Node runtime and a
   Playwright-installed Chromium; macOS artifacts are built by CI (not on Windows); artifacts are
   unsigned; the clean-install verification is manual.
-- **Deviations** (see `docs/impl-plan/phase-16-impl-plan.md` §14, C1-C7): Node-runtime worker model
+- **Deviations** (see `docs/impl-plan/phase-16-impl-plan.md` §14, C1-C8): Node-runtime worker model
   with staged resources; local fixtures instead of "reference demo websites"; performance recorded
   not asserted; no bundled browser/Node; macOS delegated to CI; `format:check` remains pre-existing
-  RED and is not fixed; a new `e2e/` directory with an extended Vitest `include` glob.
+  RED and is not fixed; a new `e2e/` directory with an extended Vitest `include` glob; the
+  full-pipeline fixture port is `8080` (an allowlisted crawler port) rather than the plan's `8100`.
 
 ### Phase 15 - Settings, keychain key storage, error boundary & toasts
 

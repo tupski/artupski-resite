@@ -3,17 +3,22 @@
  *
  * Resolves how to launch the dedicated clone preview server
  * (`src/workers/cloneServer/index.ts`) with the local Node.js runtime, mirroring
- * `src/workers/crawler/workerPaths.ts`: a co-located `.ts` entrypoint in a dev
- * checkout, or the bundler-staged `workers/cloneServer/index.js` inside a
- * packaged app (Phase 16, impl-plan §8.2 / C1). The pure resolution order lives
- * in `../workerRuntime.ts`.
+ * `src/workers/crawler/workerPaths.ts`:
+ *
+ *  - **Node (dev checkout / unit tests):** `resolveCloneServerEntrypoint()`
+ *    resolves the co-located `index.ts` (native type stripping). When a Tauri
+ *    resource directory IS available it still prefers the bundler-staged
+ *    `workers/cloneServer/index.js` there.
+ *
+ *  - **Tauri webview (packaged app):** this module is NOT used by the webview.
+ *    The webview imports the pure, Node-free `../workerEntrypoints.ts` instead,
+ *    because it cannot stat the filesystem (`node:fs` is externalized for
+ *    browser compatibility) and has no filesystem module URL (Phase 16,
+ *    impl-plan §8.2 / C1).
  *
  * SECURITY: `command` is always `node`/`node.exe` (on the Rust allowlist) and
  * `args` is an array - there is never a shell string.
  */
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
 import {
   buildWorkerEntrypoint,
   devWorkerScriptPath,
@@ -27,23 +32,11 @@ export type { WorkerEntrypoint } from '../workerRuntime';
 
 const DESCRIPTOR: WorkerDescriptor = { name: 'cloneServer', devFileName: 'index.ts' };
 
-/** The Tauri resource directory reported by the shell, or `null` outside it. */
-async function resolveTauriResourceDir(): Promise<string | null> {
-  const globalWindow = globalThis as { __TAURI_INTERNALS__?: unknown; __TAURI__?: unknown };
-  const inTauri = Boolean(globalWindow.__TAURI_INTERNALS__ || globalWindow.__TAURI__);
-  if (!inTauri) {
-    return null;
-  }
-  try {
-    const path = await import('@tauri-apps/api/path');
-    return await path.resourceDir();
-  } catch {
-    return null;
-  }
-}
-
-/** Build the real resolution environment for the current process. */
-function currentEnv(resourceDir: string | null): WorkerResolveEnv {
+/** Build the Node resolution environment for the current process. */
+async function currentEnv(resourceDir: string | null): Promise<WorkerResolveEnv> {
+  const { existsSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const { dirname } = await import('node:path');
   return {
     platform: process.platform,
     devDir: dirname(fileURLToPath(import.meta.url)),
@@ -52,19 +45,22 @@ function currentEnv(resourceDir: string | null): WorkerResolveEnv {
   };
 }
 
-/** Absolute path to the clone server entrypoint (packaged `.js` when staged). */
-export async function resolveCloneServerScriptPathAsync(): Promise<string> {
-  const resourceDir = await resolveTauriResourceDir();
-  return resolveWithEnv(currentEnv(resourceDir), DESCRIPTOR);
-}
-
-/** Build the spawn descriptor for the clone preview server. */
+/** Build the spawn descriptor for the clone preview server in the current process. */
 export async function resolveCloneServerEntrypoint(): Promise<WorkerEntrypoint> {
-  const resourceDir = await resolveTauriResourceDir();
-  return buildWorkerEntrypoint(currentEnv(resourceDir), DESCRIPTOR);
+  return buildWorkerEntrypoint(await currentEnv(null), DESCRIPTOR);
 }
 
-/** Synchronous, dev-only script path (co-located `.ts`). */
-export function resolveCloneServerScriptPath(): string {
-  return devWorkerScriptPath(currentEnv(null), DESCRIPTOR);
+/**
+ * Absolute path to the clone server entrypoint (packaged `.js` when staged).
+ *
+ * Node-only: it probes the filesystem. The webview uses
+ * `../workerEntrypoints.ts` instead.
+ */
+export async function resolveCloneServerScriptPathAsync(): Promise<string> {
+  return resolveWithEnv(await currentEnv(null), DESCRIPTOR);
+}
+
+/** Dev-only script path (co-located `.ts`). Node-only. */
+export async function resolveCloneServerScriptPath(): Promise<string> {
+  return devWorkerScriptPath(await currentEnv(null), DESCRIPTOR);
 }

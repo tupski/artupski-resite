@@ -17,6 +17,10 @@ import { logger } from '../infra/logger';
 import { createStructuredError, toStructuredError, type StructuredError } from '../infra/errors';
 import type { ProcessManager } from '../infra/processManager';
 import type { WorkerCommandPayload, WorkerResultPayload } from '../infra/workerProtocol';
+import {
+  resolvePackagedCloneServerEntrypoint,
+  resolveTauriResourceDir
+} from '../../workers/workerEntrypoints';
 
 export type LocalServerResult<T> = { ok: true; data: T } | { ok: false; error: StructuredError };
 
@@ -129,11 +133,13 @@ async function resolveDefaultAdapter(): Promise<CloneServerAdapter | null> {
   }
   const { ProcessManager } = await import('../infra/processManager');
   const { TauriProcessSpawner } = await import('../infra/tauriProcessSpawner');
-  const workerPathsModule = '../../workers/cloneServer/workerPaths';
-  const { resolveCloneServerEntrypoint } = (await import(/* @vite-ignore */ workerPathsModule)) as {
-    resolveCloneServerEntrypoint: () => Promise<{ command: string; args: string[]; cwd: string }>;
-  };
-  const entry = await resolveCloneServerEntrypoint();
+  // Static, webview-safe resolver (no `node:*`, no unresolved `@vite-ignore`
+  // dynamic import); the packaged path comes from the Tauri resource directory.
+  const resourceDir = await resolveTauriResourceDir();
+  if (!resourceDir) {
+    return null;
+  }
+  const entry = resolvePackagedCloneServerEntrypoint(resourceDir);
   const manager = new ProcessManager({
     name: 'clone-server',
     spawner: new TauriProcessSpawner(),

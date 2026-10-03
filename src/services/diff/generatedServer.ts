@@ -26,6 +26,10 @@ import { createEvent, eventBus } from '../infra/eventBus';
 import { logger } from '../infra/logger';
 import { createStructuredError, toStructuredError, type StructuredError } from '../infra/errors';
 import type { WorkerCommandPayload, WorkerResultPayload } from '../infra/workerProtocol';
+import {
+  resolvePackagedCloneServerEntrypoint,
+  resolveTauriResourceDir
+} from '../../workers/workerEntrypoints';
 
 export type GeneratedServerResult<T> =
   { ok: true; data: T } | { ok: false; error: StructuredError };
@@ -149,11 +153,13 @@ async function resolveDefaultAdapter(): Promise<GeneratedServerAdapter | null> {
   const { TauriProcessSpawner } = await import('../infra/tauriProcessSpawner');
   // The Phase 8 clone preview server is the exact loopback + root-confined static
   // server this phase needs; it is reused rather than duplicated (impl plan §17).
-  const workerPathsModule = '../../workers/cloneServer/workerPaths';
-  const { resolveCloneServerEntrypoint } = (await import(/* @vite-ignore */ workerPathsModule)) as {
-    resolveCloneServerEntrypoint: () => Promise<{ command: string; args: string[]; cwd: string }>;
-  };
-  const entry = await resolveCloneServerEntrypoint();
+  // Static, webview-safe resolver (no `node:*`, no unresolved `@vite-ignore`
+  // dynamic import); the packaged path comes from the Tauri resource directory.
+  const resourceDir = await resolveTauriResourceDir();
+  if (!resourceDir) {
+    return null;
+  }
+  const entry = resolvePackagedCloneServerEntrypoint(resourceDir);
   const manager = new ProcessManager({
     name: 'diff-server',
     spawner: new TauriProcessSpawner(),

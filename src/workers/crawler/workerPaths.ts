@@ -6,21 +6,30 @@
  * the path logic is unit-testable and the Rust spawner receives a plain
  * `{ command, args, cwd }` triple.
  *
- * In a dev checkout the worker is the co-located TypeScript entrypoint executed
- * through Node's native type stripping (Node >= 22.6 / 24). In a PACKAGED app the
- * bundler stages a self-contained `workers/crawler/index.js` under the Tauri
- * resource directory (Phase 16, impl-plan §8.2 / C1), and this module prefers it
- * when present. The resolution order and the pure logic live in
- * `../workerRuntime.ts`; this module only supplies the real environment seams
- * (`import.meta.url`, `process.platform`, the Tauri resource dir, `fs.existsSync`).
+ * There are exactly two callers, with different needs:
+ *
+ *  - **Node (dev checkout / unit tests / worker smoke test):**
+ *    `resolveWorkerEntrypoint()` resolves the co-located `index.ts`, executed
+ *    through Node's native type stripping (Node >= 22.6 / 24). When a Tauri
+ *    resource directory IS available it still prefers the bundler-staged
+ *    `workers/crawler/index.js` there; the pure order lives in `workerRuntime`.
+ *
+ *  - **Tauri webview (packaged app):** this module is NOT used by the webview.
+ *    The webview imports the pure, Node-free `../workerEntrypoints.ts` instead,
+ *    because it cannot stat the filesystem (`node:fs` is externalized for browser
+ *    compatibility) and has no filesystem module URL (`import.meta.url` is
+ *    `http://tauri.localhost/…`).
+ *
+ * Keeping the Node-only imports out of the webview path is deliberate: an
+ * earlier revision resolved the entrypoint in the webview through a
+ * `/* @vite-ignore *\/` dynamic import, which Vite left unresolved and which
+ * threw at runtime with
+ * `Failed to fetch dynamically imported module: .../workers/crawler/workerPaths`.
  *
  * SECURITY: `command` is always `node`/`node.exe` (on the Rust allowlist) and
  * `args` is an array - there is never a shell string. The worker path is derived
- * from the module location and the app resource directory, not from user input.
+ * from the app resource directory, not from user input.
  */
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
 import {
   buildWorkerEntrypoint,
   devWorkerScriptPath,
@@ -34,30 +43,11 @@ export type { WorkerEntrypoint } from '../workerRuntime';
 
 const DESCRIPTOR: WorkerDescriptor = { name: 'crawler', devFileName: 'index.ts' };
 
-/**
- * The Tauri resource directory reported by the shell, or `null` outside it.
- *
- * `@tauri-apps/api/path` is imported lazily so this module stays loadable in a
- * plain Node process (unit tests, the worker smoke test) where no Tauri global
- * exists. A failure to resolve the resource dir is an honest `null` - the dev
- * path is then used and any real problem surfaces through `PROCESS_SPAWN_FAILED`.
- */
-async function resolveTauriResourceDir(): Promise<string | null> {
-  const globalWindow = globalThis as { __TAURI_INTERNALS__?: unknown; __TAURI__?: unknown };
-  const inTauri = Boolean(globalWindow.__TAURI_INTERNALS__ || globalWindow.__TAURI__);
-  if (!inTauri) {
-    return null;
-  }
-  try {
-    const path = await import('@tauri-apps/api/path');
-    return await path.resourceDir();
-  } catch {
-    return null;
-  }
-}
-
-/** Build the real resolution environment for the current process. */
-function currentEnv(resourceDir: string | null): WorkerResolveEnv {
+/** Build the Node resolution environment for the current process. */
+async function currentEnv(resourceDir: string | null): Promise<WorkerResolveEnv> {
+  const { existsSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const { dirname } = await import('node:path');
   return {
     platform: process.platform,
     devDir: dirname(fileURLToPath(import.meta.url)),
@@ -66,27 +56,32 @@ function currentEnv(resourceDir: string | null): WorkerResolveEnv {
   };
 }
 
-/** Absolute path to the crawler entrypoint (packaged `.js` when staged). */
-export async function resolveWorkerScriptPathAsync(): Promise<string> {
-  const resourceDir = await resolveTauriResourceDir();
-  return resolveWithEnv(currentEnv(resourceDir), DESCRIPTOR);
-}
-
 /**
- * Build the spawn descriptor for the crawler worker.
+ * Build the spawn descriptor for the crawler worker in the current process.
  *
- * `resolveWorkerEntrypoint` is async so it can consult the Tauri resource
- * directory. It always resolves (never throws); callers await the descriptor.
+ * Node-only (it probes the filesystem). It always resolves (never throws);
+ * callers await the descriptor.
  */
 export async function resolveWorkerEntrypoint(): Promise<WorkerEntrypoint> {
-  const resourceDir = await resolveTauriResourceDir();
-  return buildWorkerEntrypoint(currentEnv(resourceDir), DESCRIPTOR);
+  return buildWorkerEntrypoint(await currentEnv(null), DESCRIPTOR);
 }
 
 /**
- * Synchronous, dev-only script path. Retained for callers/tests that only need
- * the co-located `.ts` path and run outside the packaged shell.
+ * Absolute path to the crawler entrypoint (packaged `.js` when staged).
+ *
+ * Node-only: it probes the filesystem. The webview uses
+ * `../workerEntrypoints.ts` instead.
  */
-export function resolveWorkerScriptPath(): string {
-  return devWorkerScriptPath(currentEnv(null), DESCRIPTOR);
+export async function resolveWorkerScriptPathAsync(): Promise<string> {
+  return resolveWithEnv(await currentEnv(null), DESCRIPTOR);
+}
+
+/**
+ * Dev-only script path. Retained for callers/tests that only need the
+ * co-located `.ts` path and run outside the packaged shell.
+ *
+ * Node-only: it derives the path from `import.meta.url`.
+ */
+export async function resolveWorkerScriptPath(): Promise<string> {
+  return devWorkerScriptPath(await currentEnv(null), DESCRIPTOR);
 }
