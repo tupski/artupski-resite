@@ -23,16 +23,18 @@ export function Sidebar() {
       )}
     >
       <div className="flex h-11 items-center gap-2 border-b border-border-subtle px-3">
-        <span
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-brand text-[11px] font-bold text-white"
+        <img
+          src="/app-icon.png"
+          alt=""
           aria-hidden="true"
-        >
-          R
-        </span>
+          className="h-5 w-5 shrink-0 rounded-sm object-contain"
+        />
         {sidebarExpanded ? (
-          <span className="truncate text-body font-semibold text-text-primary">
-            Artupski ReSite
-          </span>
+          <img
+            src="/logo-horizontal.png"
+            alt="Artupski ReSite"
+            className="h-6 w-auto max-w-[9.5rem] shrink-0 object-contain"
+          />
         ) : null}
       </div>
 
