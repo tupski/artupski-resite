@@ -16,7 +16,9 @@ const SUGGESTED_ACTIONS: Partial<Record<ErrorCode, string>> = {
   CONTEXT_LENGTH_EXCEEDED:
     'Reduce the payload size or select a model with a larger context window.',
   MALFORMED_OUTPUT: 'Retry; if it persists, choose a model that supports JSON output mode.',
-  IPC_ERROR: 'Verify the endpoint URL and that the provider service is reachable.'
+  IPC_ERROR:
+    'Check the endpoint URL and that the provider service is reachable. If the message ' +
+    'mentions "Illegal invocation", it is a client-side fetch binding bug - not the endpoint.'
 };
 
 /** Build an AI-category structured error with a code-appropriate suggestion. */

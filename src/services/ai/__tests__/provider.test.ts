@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OpenAICompatibleProvider, type FetchLike } from '../provider';
 
 /** Build a Response-like object without depending on a live server. */
@@ -147,6 +147,50 @@ describe('OpenAICompatibleProvider.listModels / validateCredentials', () => {
   });
 });
 
+describe('OpenAICompatibleProvider default fetch receiver (Illegal invocation regression)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('calls the global fetch with the global object as its receiver', async () => {
+    const receivers: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      function (this: unknown) {
+        receivers.push(this);
+        return Promise.resolve(jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
+      }
+    );
+
+    // Construct WITHOUT an injected fetch so the provider resolves the default.
+    const provider = new OpenAICompatibleProvider(CONFIG);
+    await provider.chatCompletion([{ role: 'user', content: 'hi' }]);
+
+    expect(receivers).toHaveLength(1);
+    // A detached reference (`const f = globalThis.fetch; f(url)`) would set the
+    // receiver to `undefined`/the provider, which the native fetch rejects with
+    // "Illegal invocation". The default must keep `globalThis` as receiver.
+    expect(receivers[0]).toBe(globalThis);
+  });
+
+  it('does not throw Illegal invocation when the native fetch is a strict host function', async () => {
+    vi.stubGlobal(
+      'fetch',
+      function (this: unknown) {
+        if (this !== globalThis) {
+          throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+        }
+        return Promise.resolve(jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
+      }
+    );
+
+    const provider = new OpenAICompatibleProvider(CONFIG);
+    await expect(provider.chatCompletion([{ role: 'user', content: 'hi' }])).resolves.toMatchObject({
+      content: 'ok'
+    });
+  });
+});
+
 describe('OpenAICompatibleProvider transport failures', () => {
   it('maps a network error to a retryable ai-category error', async () => {
     const fetchImpl: FetchLike = async () => {
@@ -170,5 +214,54 @@ describe('OpenAICompatibleProvider transport failures', () => {
     await expect(provider.chatCompletion([{ role: 'user', content: 'hi' }])).rejects.toMatchObject({
       code: 'CONNECTION_TIMED_OUT'
     });
+  });
+
+  it('maps a detached-fetch (Illegal invocation) failure to an accurate, non-reachability error', async () => {
+    const fetchImpl: FetchLike = async () => {
+      throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+    };
+    const provider = new OpenAICompatibleProvider(CONFIG, fetchImpl);
+    try {
+      await provider.chatCompletion([{ role: 'user', content: 'hi' }]);
+      throw new Error('expected chatCompletion to reject');
+    } catch (error) {
+      const structured = error as { code: string; message: string; suggestedAction: string };
+      expect(structured.code).toBe('IPC_ERROR');
+      // The message must name the real cause, not a network/reachability problem.
+      expect(structured.message.toLowerCase()).toContain('receiver');
+      expect(structured.suggestedAction.toLowerCase()).not.toContain('reachable');
+    }
+  });
+});
+
+describe('OpenAICompatibleProvider endpoint URL assembly', () => {
+  function captureUrl(): { url: () => string; fetchImpl: FetchLike } {
+    let seen = '';
+    return {
+      url: () => seen,
+      fetchImpl: async (url) => {
+        seen = url;
+        return jsonResponse({ choices: [{ message: { content: 'x' } }], data: [] });
+      }
+    };
+  }
+
+  it.each([
+    ['https://api.example.com/v1', 'https://api.example.com/v1/chat/completions'],
+    ['https://api.example.com/v1/', 'https://api.example.com/v1/chat/completions'],
+    ['https://api.example.com/v1///', 'https://api.example.com/v1/chat/completions'],
+    ['  https://api.example.com/v1/  ', 'https://api.example.com/v1/chat/completions']
+  ])('joins %s without duplicate or missing slashes', async (baseUrl, expected) => {
+    const { url, fetchImpl } = captureUrl();
+    const provider = new OpenAICompatibleProvider({ ...CONFIG, baseUrl }, fetchImpl);
+    await provider.chatCompletion([{ role: 'user', content: 'hi' }]);
+    expect(url()).toBe(expected);
+  });
+
+  it('assembles the /models URL for health checks', async () => {
+    const { url, fetchImpl } = captureUrl();
+    const provider = new OpenAICompatibleProvider({ ...CONFIG, baseUrl: 'http://localhost:11434/v1' }, fetchImpl);
+    await provider.listModels();
+    expect(url()).toBe('http://localhost:11434/v1/models');
   });
 });

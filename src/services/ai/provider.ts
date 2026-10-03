@@ -25,6 +25,29 @@ import { normalizeBaseUrl } from './presets';
 /** A minimal `fetch`-compatible signature (injectable for tests). */
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Resolve the ambient `fetch` with its receiver attached.
+ *
+ * `globalThis.fetch` is a host function: it MUST be invoked with the global
+ * object as its `this`. Assigning it to a field and later calling it as
+ * `this.fetchImpl(...)` detaches the receiver and the native implementation
+ * throws `TypeError: Failed to execute 'fetch' on 'Window': Illegal invocation`.
+ * Binding the receiver once here is the root-cause fix. Injected fakes are used
+ * as-is (they are ordinary closures and do not require a receiver).
+ */
+function resolveDefaultFetch(): FetchLike {
+  const ambient: unknown = globalThis.fetch;
+  if (typeof ambient !== 'function') {
+    return ambient as FetchLike;
+  }
+  return (ambient as FetchLike).bind(globalThis);
+}
+
+/** True for the host-function receiver error thrown by a detached `fetch`. */
+function isIllegalInvocation(error: unknown): boolean {
+  return error instanceof TypeError && /illegal invocation/i.test(error.message);
+}
+
 /** Default request timeout when neither the option nor config supplies one. */
 export const DEFAULT_TIMEOUT_MS = 60000;
 
@@ -54,7 +77,7 @@ export class OpenAICompatibleProvider implements IAIProvider {
   private readonly config: ProviderConfig;
   private readonly fetchImpl: FetchLike;
 
-  constructor(config: ProviderConfig, fetchImpl: FetchLike = globalThis.fetch) {
+  constructor(config: ProviderConfig, fetchImpl: FetchLike = resolveDefaultFetch()) {
     this.config = { timeoutMs: DEFAULT_TIMEOUT_MS, ...config };
     this.fetchImpl = fetchImpl;
   }
@@ -288,6 +311,22 @@ export class OpenAICompatibleProvider implements IAIProvider {
           retryable: true,
           cause: error
         });
+      }
+      if (isIllegalInvocation(error)) {
+        // A detached `fetch` (lost `this`) is a client-side binding bug, NOT a
+        // network/reachability problem. Say so explicitly so the message is
+        // actionable instead of blaming the endpoint.
+        throw createAiError(
+          'IPC_ERROR',
+          'AI request failed: fetch was invoked without its window receiver (Illegal invocation). ' +
+            'This is a client-side binding bug, not an endpoint problem.',
+          {
+            retryable: false,
+            recoveryHint:
+              'This is a client-side fetch binding bug, not a reachability issue. The endpoint and key are not the cause.',
+            cause: error
+          }
+        );
       }
       throw createAiError(
         'IPC_ERROR',
