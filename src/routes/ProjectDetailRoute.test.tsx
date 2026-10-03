@@ -72,7 +72,7 @@ describe('ProjectDetailRoute', () => {
     useProjectDetailStore.getState().reset();
   });
 
-  it('reviews a stored project read-only (no generate/rescan actions)', async () => {
+  it('offers maintenance actions for a stored project (rescan + regenerate)', async () => {
     const { project } = await seedProjectWithScan();
     renderDetail(project.id);
 
@@ -81,16 +81,14 @@ describe('ProjectDetailRoute', () => {
       expect(screen.getByRole('heading', { name: 'Detail project', level: 1 })).toBeInTheDocument()
     );
 
-    // No mutation surface is offered anywhere in the detail view.
-    expect(screen.queryByRole('button', { name: /start scan/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /rescan/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /generate static clone/i })).not.toBeInTheDocument();
+    // The Overview tab exposes the maintenance surface. A rescan starts a new
+    // scan (never overwrites); regeneration rebuilds derived artifacts.
+    expect(screen.getByRole('button', { name: /rescan project/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /regenerate static clone/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /generate blueprint/i })).toBeInTheDocument();
 
-    // The Blueprint tab, when opened, must not offer generation either.
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('tab', { name: 'Blueprint' }));
-    expect(screen.queryByRole('button', { name: /generate blueprint/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /regenerate blueprint/i })).not.toBeInTheDocument();
+    // Docs regeneration is only offered once a Blueprint exists.
+    expect(screen.getByRole('button', { name: /regenerate docs/i })).toBeDisabled();
   });
 
   it('shows the crawled pages in the Pages tab', async () => {

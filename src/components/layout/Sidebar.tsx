@@ -22,20 +22,20 @@ export function Sidebar() {
         sidebarExpanded ? 'w-56' : 'w-14'
       )}
     >
-      <div className="flex h-11 items-center gap-2 border-b border-border-subtle px-3">
-        <img
-          src="/app-icon.png"
-          alt=""
-          aria-hidden="true"
-          className="h-5 w-5 shrink-0 rounded-sm object-contain"
-        />
+      <div className="flex h-11 items-center justify-center border-b border-border-subtle px-2">
         {sidebarExpanded ? (
           <img
             src="/logo-horizontal.png"
             alt="Artupski ReSite"
-            className="h-6 w-auto max-w-[9.5rem] shrink-0 object-contain"
+            className="h-6 w-auto max-w-full object-contain"
           />
-        ) : null}
+        ) : (
+          <img
+            src="/app-icon.png"
+            alt="Artupski ReSite"
+            className="h-6 w-6 object-contain"
+          />
+        )}
       </div>
 
       <ul className="flex flex-1 flex-col gap-0.5 p-1.5">

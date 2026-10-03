@@ -17,6 +17,7 @@ import { useTechnologyStore } from '../stores/technologyStore';
 import { useResponsiveStore } from '../stores/responsiveStore';
 import { useCloneStore } from '../stores/cloneStore';
 import { useBlueprintStore } from '../stores/blueprintStore';
+import { runClone, isCloneAvailable } from '../services/clone/runClone';
 import type { Scan } from '../types/models';
 import {
   PROJECT_STATUS_LABEL,
@@ -27,12 +28,14 @@ import {
 } from '../components/project/format';
 
 /**
- * Project detail (read-only review) - Artupski ReSite
+ * Project detail (review + maintenance) - Artupski ReSite
  *
- * A completed project cannot be edited or re-scanned, so this is the only way
- * to revisit what a scan produced. Every panel reads the persisted database -
- * nothing is fabricated and no mutation is offered: the Blueprint and clone
- * panels are shown read-only (no generate actions).
+ * The way to revisit what a scan produced. Every panel reads the persisted
+ * database - nothing is fabricated. The Overview tab offers maintenance actions
+ * for a stored project: "Rescan project" starts a NEW scan from the Scan screen
+ * (existing results are never overwritten), while the regenerate actions rebuild
+ * derived artifacts in place from the scan's persisted evidence (static clone,
+ * Blueprint, docs).
  *
  * The per-scan datasets (technologies, responsive captures, clone assets,
  * Blueprint) are loaded through their existing stores, exactly as the Scan
@@ -110,7 +113,11 @@ export function ProjectDetailRoute() {
   const cloneLoading = useCloneStore((state) => state.loading);
   const cloneError = useCloneStore((state) => state.error);
   const loadCloneAssets = useCloneStore((state) => state.loadForScan);
+  const setCloneReport = useCloneStore((state) => state.setReport);
+  const setCloneError = useCloneStore((state) => state.setError);
   const clearClone = useCloneStore((state) => state.clear);
+  const cloneAvailable = isCloneAvailable();
+  const [cloneGenerating, setCloneGenerating] = useState(false);
 
   const blueprintStatus = useBlueprintStore((state) => state.status);
   const blueprintRecord = useBlueprintStore((state) => state.record);
@@ -120,10 +127,16 @@ export function ProjectDetailRoute() {
   const blueprintPartial = useBlueprintStore((state) => state.partial);
   const blueprintReadError = useBlueprintStore((state) => state.readError);
   const blueprintLoading = useBlueprintStore((state) => state.loading);
+  const blueprintGenerating = useBlueprintStore((state) => state.generating);
+  const blueprintGeneratingDocs = useBlueprintStore((state) => state.generatingDocs);
   const blueprintError = useBlueprintStore((state) => state.error);
   const loadBlueprint = useBlueprintStore((state) => state.loadForScan);
+  const generateBlueprint = useBlueprintStore((state) => state.generate);
+  const generateBlueprintDocs = useBlueprintStore((state) => state.generateDocs);
   const exportBlueprintJson = useBlueprintStore((state) => state.exportJson);
   const clearBlueprint = useBlueprintStore((state) => state.clear);
+
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   // Load (or reload) the project whenever the route id changes. `load` resets
   // the store first, so switching projects never shows the previous one's rows.
@@ -173,6 +186,56 @@ export function ProjectDetailRoute() {
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
+  }
+
+  // Regenerate (or create) the Blueprint for the active scan from its persisted
+  // evidence. The store reloads from the database on success.
+  async function handleRegenerateBlueprint() {
+    if (!project || !activeScanId) {
+      return;
+    }
+    setActionMessage(null);
+    const ok = await generateBlueprint({ scanId: activeScanId, projectId: project.id });
+    setActionMessage(ok ? 'Blueprint regenerated.' : 'Blueprint regeneration failed.');
+  }
+
+  // Generate the deterministic + optional-AI documentation set for the latest
+  // persisted Blueprint. Requires a Blueprint to exist.
+  async function handleGenerateDocs() {
+    if (!blueprintRecord) {
+      return;
+    }
+    setActionMessage(null);
+    const ok = await generateBlueprintDocs();
+    setActionMessage(ok ? 'Documentation generated.' : 'Documentation generation failed.');
+  }
+
+  // Rebuild the static clone from the active scan's persisted pages/assets.
+  async function handleRegenerateClone() {
+    if (!project || !activeScanId) {
+      return;
+    }
+    setActionMessage(null);
+    setCloneGenerating(true);
+    try {
+      const result = await runClone({
+        scanId: activeScanId,
+        projectId: project.id,
+        seedUrl: project.targetUrl
+      });
+      if (!result.ok) {
+        setCloneError(result.error);
+        setCloneReport(null);
+        setActionMessage('Static clone regeneration failed.');
+        return;
+      }
+      setCloneError(null);
+      setCloneReport(result.data.report);
+      await loadCloneAssets(activeScanId);
+      setActionMessage('Static clone regenerated.');
+    } finally {
+      setCloneGenerating(false);
+    }
   }
 
   const activeScan = scans.find((scan) => scan.id === activeScanId) ?? null;
@@ -280,11 +343,26 @@ export function ProjectDetailRoute() {
           className="flex flex-col gap-4"
         >
           {tab === 'overview' ? (
-            <OverviewPanel
-              scans={scans}
-              activeScan={activeScan}
-              onSelectScan={(id) => void selectScan(id)}
-            />
+            <>
+              <MaintenancePanel
+                activeScan={activeScan}
+                cloneAvailable={cloneAvailable}
+                cloneGenerating={cloneGenerating}
+                blueprintGenerating={blueprintGenerating}
+                blueprintGeneratingDocs={blueprintGeneratingDocs}
+                hasBlueprint={blueprintRecord !== null}
+                message={actionMessage}
+                onRescan={() => navigate('/scan')}
+                onRegenerateClone={() => void handleRegenerateClone()}
+                onRegenerateBlueprint={() => void handleRegenerateBlueprint()}
+                onGenerateDocs={() => void handleGenerateDocs()}
+              />
+              <OverviewPanel
+                scans={scans}
+                activeScan={activeScan}
+                onSelectScan={(id) => void selectScan(id)}
+              />
+            </>
           ) : null}
 
           {tab === 'pages' ? (
@@ -356,11 +434,12 @@ export function ProjectDetailRoute() {
                 partial={blueprintPartial}
                 readError={blueprintReadError}
                 loading={blueprintLoading}
-                generating={false}
+                generating={blueprintGenerating}
+                generatingDocs={blueprintGeneratingDocs}
                 error={blueprintError}
-                canGenerate={false}
-                readOnly
-                onGenerate={() => undefined}
+                canGenerate={activeScan?.status === 'completed'}
+                onGenerate={() => void handleRegenerateBlueprint()}
+                onGenerateDocs={() => void handleGenerateDocs()}
                 onExport={() => void handleExportBlueprint()}
               />
             </Panel>
@@ -368,6 +447,97 @@ export function ProjectDetailRoute() {
         </div>
       </div>
     </PageShell>
+  );
+}
+
+interface MaintenancePanelProps {
+  activeScan: Scan | null;
+  cloneAvailable: boolean;
+  cloneGenerating: boolean;
+  blueprintGenerating: boolean;
+  blueprintGeneratingDocs: boolean;
+  hasBlueprint: boolean;
+  message: string | null;
+  onRescan: () => void;
+  onRegenerateClone: () => void;
+  onRegenerateBlueprint: () => void;
+  onGenerateDocs: () => void;
+}
+
+/**
+ * Maintenance actions for a stored project. A rescan always starts a NEW scan
+ * from the Scan screen (existing results are never overwritten); the regenerate
+ * actions rebuild derived artifacts (static clone, Blueprint, docs) in place
+ * from the scan's persisted evidence.
+ */
+function MaintenancePanel({
+  activeScan,
+  cloneAvailable,
+  cloneGenerating,
+  blueprintGenerating,
+  blueprintGeneratingDocs,
+  hasBlueprint,
+  message,
+  onRescan,
+  onRegenerateClone,
+  onRegenerateBlueprint,
+  onGenerateDocs
+}: MaintenancePanelProps) {
+  const scanCompleted = activeScan?.status === 'completed';
+
+  return (
+    <Panel title="Maintenance">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="primary" onClick={onRescan}>
+            Rescan project
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={!scanCompleted || !cloneAvailable || cloneGenerating}
+            onClick={onRegenerateClone}
+          >
+            {cloneGenerating ? 'Regenerating clone…' : 'Regenerate static clone'}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={!scanCompleted || blueprintGenerating}
+            onClick={onRegenerateBlueprint}
+          >
+            {blueprintGenerating
+              ? 'Regenerating…'
+              : hasBlueprint
+                ? 'Regenerate blueprint'
+                : 'Generate blueprint'}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={!hasBlueprint || blueprintGeneratingDocs}
+            onClick={onGenerateDocs}
+          >
+            {blueprintGeneratingDocs ? 'Generating docs…' : 'Regenerate docs'}
+          </Button>
+        </div>
+
+        <p className="text-caption text-text-muted">
+          {scanCompleted
+            ? 'Regenerating rebuilds derived artifacts in place from this scan’s stored evidence.'
+            : 'A rescan starts a new scan. Regeneration is available once a scan has completed.'}
+        </p>
+
+        {!cloneAvailable ? (
+          <p className="text-caption text-text-muted">
+            The static clone engine is only available in the desktop shell.
+          </p>
+        ) : null}
+
+        {message ? (
+          <p role="status" className="text-caption text-text-secondary">
+            {message}
+          </p>
+        ) : null}
+      </div>
+    </Panel>
   );
 }
 
